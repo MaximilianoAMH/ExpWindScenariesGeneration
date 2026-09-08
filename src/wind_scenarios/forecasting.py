@@ -143,12 +143,40 @@ def forecast_quantiles(
             f"context must be 1-D, got shape {tuple(context_tensor.shape)}."
         )
 
+    if horizon_len <= 0:
+        raise ValueError(
+            "horizon_len must be a positive integer."
+        )
+
+    if model_context_len <= 0:
+        raise ValueError(
+            "model_context_len must be a positive integer."
+        )
+
+    if model_context_len != int(context_tensor.numel()):
+        raise ValueError(
+            "model_context_len must match the actual number of "
+            "observations in context. "
+            f"Got model_context_len={model_context_len} and "
+            f"len(context)={context_tensor.numel()}."
+        )
+
     input_values = context_tensor.unsqueeze(0)
 
     outputs = model(
         past_values=input_values,
         forecast_context_len=model_context_len,
     )
+
+    available_horizon = int(
+        outputs.full_predictions.shape[1]
+    )
+
+    if horizon_len > available_horizon:
+        raise ValueError(
+            f"Requested horizon_len={horizon_len}, but TimesFM "
+            f"returned only {available_horizon} forecast steps."
+        )
 
     full_predictions = (
         outputs.full_predictions[0, :horizon_len, :]
