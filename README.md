@@ -104,10 +104,10 @@ Los scripts de `scripts/diagnostics/` no forman parte del pipeline principal; si
 Ejemplos:
 
 ```powershell
-python scripts\diagnostics\check_timesfm_installation.py
-python scripts\diagnostics\check_timesfm_channels.py
-python scripts\diagnostics\inspect_data.py
-python scripts\diagnostics\plot_data_overview.py
+uv run python scripts\diagnostics\check_timesfm_installation.py
+uv run python scripts\diagnostics\check_timesfm_channels.py
+uv run python scripts\diagnostics\inspect_data.py
+uv run python scripts\diagnostics\plot_data_overview.py
 ```
 
 ## Datos
@@ -129,39 +129,76 @@ La serie diaria usada en los experimentos actuales cubre 1980-2017. La configura
 - desarrollo: 1980-2013;
 - test: 2014-2017.
 
-Los CSV de datos están excluidos de Git mediante `.gitignore`; no deberían subirse al repositorio salvo que exista una razón explícita para publicarlos.
 
 Si se parte del archivo horario `data/wind_hourly.csv`, el preprocesamiento se ejecuta con:
 
 ```powershell
-python scripts\preprocess_wind_ab.py
+uv run python scripts\preprocess_wind_ab.py
 ```
 
 El script calcula medias diarias sólo para días observados completos de 24 horas y reporta discontinuidades de calendario sin interpolarlas silenciosamente.
 
-## Instalación
+## Instalación y manejo del entorno con uv
+
+Este repositorio usa **uv** como gestor de entorno y dependencias. No es necesario crear el entorno con `python -m venv` ni instalar el proyecto con `pip install -e .`.
 
 Desde la raíz del repositorio:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -e .
+uv sync
 ```
 
-Para trabajar también con el experimento de fine-tuning:
+`uv sync` crea o actualiza automáticamente el entorno local `.venv`, instala el paquete del proyecto y sincroniza las dependencias declaradas en `pyproject.toml`.
+
+La versión de `transformers` se restringe a:
+
+```text
+transformers>=5.16.1,<6
+```
+
+porque `5.16.1` fue verificada en este proyecto.
+
+### Regla de ejecución
+
+Los comandos del repositorio deben ejecutarse con `uv run`:
 
 ```powershell
-pip install -e ".[finetuning]"
+uv run generate-wind-scenarios ...
+uv run visualize-wind-scenarios ...
+uv run python scripts\...
 ```
 
-Para ejecutar tests:
+Esto evita que PowerShell utilice accidentalmente un ejecutable instalado en el Python global de Windows.
+
+Por ejemplo, se debe preferir:
 
 ```powershell
-pip install -e ".[dev]"
-pytest
+uv run generate-wind-scenarios --origin 2014-04-01 --historical_method same_calendar_date
 ```
+
+
+### Dependencias opcionales
+
+Para incluir las dependencias del experimento de fine-tuning:
+
+```powershell
+uv sync --extra finetuning
+```
+
+Para instalar las dependencias de desarrollo y ejecutar los tests:
+
+```powershell
+uv sync --extra dev
+uv run pytest
+```
+
+Después de modificar dependencias en `pyproject.toml`, basta con volver a ejecutar:
+
+```powershell
+uv sync
+```
+
+`uv` actualizará el entorno y el archivo `uv.lock` correspondiente.
 
 ## Generación de escenarios
 
@@ -170,13 +207,13 @@ pytest
 Para pronosticar el 1-28 de abril de 2014 usando los 34 abriles disponibles entre 1980 y 2013:
 
 ```powershell
-generate-wind-scenarios --origin 2014-04-01 --historical_method same_calendar_date
+uv run generate-wind-scenarios --origin 2014-04-01 --historical_method same_calendar_date
 ```
 
 También puede ejecutarse directamente como módulo:
 
 ```powershell
-python -m wind_scenarios.cli.generate --origin 2014-04-01 --historical_method same_calendar_date
+uv run python -m wind_scenarios.cli.generate --origin 2014-04-01 --historical_method same_calendar_date
 ```
 
 El contexto suministrado a TimesFM es siempre el bloque de 32 días inmediatamente anterior al origen. Para `2014-04-01` es `2014-02-28` a `2014-03-31`.
@@ -309,7 +346,7 @@ dos ventanas seleccionadas del mismo año deben tener fechas de inicio separadas
 #### Ejemplo: 100 escenarios
 
 ```powershell
-generate-wind-scenarios `
+uv run generate-wind-scenarios `
     --origin 2014-04-01 `
     --historical_method moving_window `
     --n_scenarios 100 `
@@ -397,7 +434,7 @@ outputs/schaake/2014-04-01/
 ### Escenario individual con todos los cuantiles
 
 ```powershell
-visualize-wind-scenarios `
+uv run visualize-wind-scenarios `
     --input_dir outputs\schaake\2014-04-01 `
     --mode single `
     --scenario_number 1 `
@@ -413,10 +450,22 @@ El gráfico muestra:
 - trayectoria histórica fuente;
 - realización observada, sólo para evaluación.
 
+
+### Escenario individual con cuantiles 10-50-90
+Basta con no incluir la opción "--all_quantiles":
+
+```powershell
+uv run visualize-wind-scenarios `
+    --input_dir outputs\schaake\2014-04-01 `
+    --mode single `
+    --scenario_number 1 `
+```
+
+
 ### Fan plot
 
 ```powershell
-visualize-wind-scenarios `
+uv run visualize-wind-scenarios `
     --input_dir outputs\schaake\2014-04-01 `
     --mode fan `
     --all_quantiles
@@ -425,7 +474,7 @@ visualize-wind-scenarios `
 ### Exportar todos los escenarios individualmente
 
 ```powershell
-visualize-wind-scenarios `
+uv run visualize-wind-scenarios `
     --input_dir outputs\schaake\2014-04-01 `
     --mode single `
     --all_quantiles `
@@ -498,7 +547,7 @@ La generación se detiene si se detecta crossing. Existe una opción `sort`, per
 `tests/test_schaake.py` reproduce el ejemplo pequeño de la metodología y verifica que el resultado final preserve exactamente las marginales discretizadas mediante permutación.
 
 ```powershell
-pytest
+uv run pytest
 ```
 
 ## Próximos pasos

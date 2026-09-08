@@ -142,6 +142,16 @@ def parse_args() -> argparse.Namespace:
         default=PROJECT_ROOT / "outputs" / "schaake",
     )
 
+    parser.add_argument(
+        "--device",
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help=(
+            "Execution device. 'auto' uses CUDA when available "
+            "and otherwise falls back to CPU."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -287,12 +297,25 @@ def save_historical_values(
 def main() -> None:
     args = parse_args()
 
-    if not torch.cuda.is_available():
-        raise RuntimeError(
-            "CUDA is not available."
+    if args.device == "auto":
+        device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
         )
+    elif args.device == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA was requested with --device cuda, "
+                "but CUDA is not available."
+            )
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
 
-    device = torch.device("cuda")
+    model_dtype = (
+        torch.bfloat16
+        if device.type == "cuda"
+        else torch.float32
+    )
     origin = pd.Timestamp(
         args.origin
     ).normalize()
@@ -318,11 +341,16 @@ def main() -> None:
 
     print(f"\nLoading zero-shot model: {MODEL_ID}")
 
+    print(
+        f"Execution device: {device} "
+        f"(dtype={model_dtype})"
+    )
+
     model = (
         TimesFm2_5ModelForPrediction
         .from_pretrained(
             MODEL_ID,
-            dtype=torch.bfloat16,
+            dtype=model_dtype,
         )
         .to(device)
     )

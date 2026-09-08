@@ -1,0 +1,3 @@
+[console_scripts]
+generate-wind-scenarios = wind_scenarios.cli.generate:main
+visualize-wind-scenarios = wind_scenarios.cli.visualize:main

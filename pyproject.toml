@@ -13,7 +13,7 @@ dependencies = [
     "pandas",
     "matplotlib",
     "torch",
-    "transformers",
+    "transformers>=5.16.1,<6",
 ]
 
 [project.optional-dependencies]
