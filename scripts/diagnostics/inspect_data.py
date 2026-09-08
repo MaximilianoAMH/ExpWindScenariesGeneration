@@ -1,34 +1,31 @@
-from pathlib import Path
+"""Print a compact diagnostic summary of the processed daily WIND dataset."""
 
-import pandas as pd
+from __future__ import annotations
+
+from wind_scenarios.data import DEFAULT_DATA_PATH, find_daily_gaps, load_wind_dataframe
 
 
-DATA_PATH = Path("data/wind_dataset.csv")
+def main() -> None:
+    df = load_wind_dataframe(DEFAULT_DATA_PATH)
+    gaps = find_daily_gaps(df)
 
-df = pd.read_csv(DATA_PATH)
+    print("Shape:", df.shape)
+    print("\nColumns:", df.columns.tolist())
+    print("\nDtypes:\n", df.dtypes)
+    print("\nFirst rows:\n", df.head().to_string(index=False))
+    print("\nLast rows:\n", df.tail().to_string(index=False))
+    print("\nNull values:\n", df.isna().sum())
 
-print("Shape:", df.shape)
-print("\nColumnas:")
-print(df.columns.tolist())
+    print("\nTemporal range:")
+    print("Start:", df["DATE"].min())
+    print("End:  ", df["DATE"].max())
 
-print("\nTipos:")
-print(df.dtypes)
+    print("\nWIND statistics:\n", df["WIND"].describe())
 
-print("\nPrimeras filas:")
-print(df.head())
+    print("\nDaily calendar gaps:", len(gaps))
+    if not gaps.empty:
+        print(gaps.to_string(index=False))
 
-print("\nÚltimas filas:")
-print(df.tail())
 
-print("\nValores nulos:")
-print(df.isna().sum())
-
-# DATE a datetime
-df["DATE"] = pd.to_datetime(df["DATE"])
-
-print("\nRango temporal:")
-print("Inicio:", df["DATE"].min())
-print("Fin:", df["DATE"].max())
-
-print("\nEstadísticas WIND:")
-print(df["WIND"].describe())
+if __name__ == "__main__":
+    main()

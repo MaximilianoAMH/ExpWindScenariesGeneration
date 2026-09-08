@@ -50,7 +50,8 @@ ExperimentosTimesFM/
 │   └── .gitkeep
 │
 ├── docs/
-│   └── Metodologia_Schaake_Shuffle.pdf
+│   ├── Metodologia_Schaake_Shuffle.pdf
+│   └── Metodologia_Schaake_Shuffle.tex
 │
 ├── src/
 │   └── wind_scenarios/
@@ -66,8 +67,10 @@ ExperimentosTimesFM/
 ├── scripts/
 │   ├── preprocess_wind_ab.py
 │   └── diagnostics/
+│       ├── check_timesfm_installation.py
+│       ├── check_timesfm_channels.py
 │       ├── inspect_data.py
-│       └── test_timesfm_channels.py
+│       └── plot_data_overview.py
 │
 ├── experiments/
 │   └── finetuning/
@@ -88,6 +91,24 @@ ExperimentosTimesFM/
 - `cli/visualize.py`: visualización de fan plots o escenarios individuales; siempre muestra el contexto utilizado por TimesFM.
 
 Los scripts de fine-tuning se mantienen en `experiments/finetuning/` para no mezclar el pipeline estable actual con experimentos futuros.
+
+### Diagnósticos auxiliares
+
+Los scripts de `scripts/diagnostics/` no forman parte del pipeline principal; sirven para verificar el entorno y explorar los datos:
+
+- `check_timesfm_installation.py`: smoke test de TimesFM 2.5 con una serie artificial; verifica carga del modelo e inferencia básica.
+- `check_timesfm_channels.py`: diagnóstico de canales de `full_predictions` sobre WIND, incluyendo la comparación entre el canal 0 y Q50.
+- `inspect_data.py`: resumen del dataset diario procesado, estadísticas y gaps de calendario.
+- `plot_data_overview.py`: gráfico comparativo de los primeros cinco y últimos cinco años de la serie diaria.
+
+Ejemplos:
+
+```powershell
+python scripts\diagnostics\check_timesfm_installation.py
+python scripts\diagnostics\check_timesfm_channels.py
+python scripts\diagnostics\inspect_data.py
+python scripts\diagnostics\plot_data_overview.py
+```
 
 ## Datos
 
@@ -160,7 +181,132 @@ python -m wind_scenarios.cli.generate --origin 2014-04-01 --historical_method sa
 
 El contexto suministrado a TimesFM es siempre el bloque de 32 días inmediatamente anterior al origen. Para `2014-04-01` es `2014-02-28` a `2014-03-31`.
 
-### Caso B: 100 escenarios con ventanas móviles
+### Caso B: más de una trayectoria por año mediante ventanas móviles
+
+Cuando se usa `same_calendar_date`, para un origen como `2014-04-01` existe como máximo una trayectoria candidata por año histórico:
+
+```text
+1980-04-01 -> 1980-04-28
+1981-04-01 -> 1981-04-28
+...
+2013-04-01 -> 2013-04-28
+```
+
+Con 1980-2013 esto produce, idealmente, `L = 34` trayectorias. Si se desean más escenarios, el método `moving_window` aumenta la biblioteca histórica permitiendo que la ventana de 28 días comience algunos días antes o después de la fecha estacional de referencia.
+
+#### Cómo se construyen las ventanas móviles
+
+Para cada año histórico `y` se define primero una **fecha ancla** con el mismo mes y día que el origen del forecast. Para un origen `2014-04-01`, las fechas ancla son:
+
+```text
+1980-04-01
+1981-04-01
+...
+2013-04-01
+```
+
+Si `window_radius_days = R`, se consideran como posibles inicios:
+
+```text
+fecha_ancla - R, ..., fecha_ancla, ..., fecha_ancla + R
+```
+
+Por ejemplo, con:
+
+```text
+R = 15
+H = 28
+```
+
+para cada año se generan candidatos aproximadamente desde:
+
+```text
+17 de marzo -> 13 de abril
+18 de marzo -> 14 de abril
+...
+ 1 de abril -> 28 de abril
+...
+16 de abril -> 13 de mayo
+```
+
+Cada fila sigue siendo una **trayectoria histórica completa de 28 días consecutivos**. No se seleccionan días independientes ni se mezclan años dentro de una misma trayectoria.
+
+En términos de fechas:
+
+```text
+start(y,d) = anchor(y) + d,     d = -R,...,R
+end(y,d)   = start(y,d) + H - 1
+```
+
+Antes de aplicar filtros, el número máximo de candidatos es aproximadamente:
+
+```text
+n_años * (2R + 1)
+```
+
+Para 34 años y `R = 15`:
+
+```text
+34 * 31 = 1054 candidatos potenciales
+```
+
+Esto **no significa que se usarán 1054 escenarios**. Primero se construye la biblioteca de candidatos válidos y después se seleccionan exactamente `L` trayectorias si se especifica `--n_scenarios`.
+
+#### Filtros aplicados a los candidatos
+
+Una ventana candidata se descarta si:
+
+1. no contiene exactamente `H = 28` observaciones;
+2. cruza un gap de calendario;
+3. alguno de sus días no está disponible en el dataset;
+4. la trayectoria completa queda fuera del período histórico permitido.
+
+Por tanto, los escenarios nunca se construyen rellenando o interpolando silenciosamente ventanas históricas incompletas.
+
+#### Cómo se eligen las `L` trayectorias
+
+Con la estrategia por defecto:
+
+```text
+selection = closest
+```
+
+las ventanas se priorizan por cercanía estacional al origen:
+
+```text
+offset 0 días
+offset +/-1 día
+offset +/-2 días
+...
+```
+
+Las ventanas que empiezan exactamente el 1 de abril tienen prioridad sobre las que empiezan el 31 de marzo o 2 de abril, y éstas tienen prioridad sobre ventanas progresivamente más alejadas.
+
+El parámetro:
+
+```text
+--min_start_distance_days
+```
+
+controla cuánto pueden parecerse dos ventanas seleccionadas dentro de un mismo año. Sin ninguna restricción podrían seleccionarse simultáneamente:
+
+```text
+01 abril -> 28 abril
+02 abril -> 29 abril
+03 abril -> 30 abril
+```
+
+Estas trayectorias comparten casi todos sus datos y aportarían poca diversidad adicional.
+
+Con:
+
+```text
+--min_start_distance_days 7
+```
+
+dos ventanas seleccionadas del mismo año deben tener fechas de inicio separadas por al menos siete días. El filtro se aplica **dentro de cada año**; ventanas de años diferentes no compiten por esta distancia.
+
+#### Ejemplo: 100 escenarios
 
 ```powershell
 generate-wind-scenarios `
@@ -171,7 +317,55 @@ generate-wind-scenarios `
     --min_start_distance_days 7
 ```
 
-La selección histórica es independiente del núcleo de Schaake Shuffle; cambiar `L` o el método histórico no modifica la implementación del shuffle.
+El procedimiento es:
+
+```text
+34 años históricos
+        |
+        v
+fecha ancla de cada año
+        |
+        v
+inicios entre -15 y +15 días
+        |
+        v
+ventanas completas de 28 días
+        |
+        v
+eliminar ventanas inválidas
+        |
+        v
+ordenar por cercanía estacional
+        |
+        v
+aplicar separación mínima entre inicios
+        |
+        v
+seleccionar L = 100 trayectorias
+        |
+        v
+calcular ranks y aplicar Schaake Shuffle
+```
+
+Si con la combinación elegida de `window_radius_days` y `min_start_distance_days` no existen suficientes candidatos válidos para alcanzar `L`, el programa falla explícitamente. No duplica trayectorias ni crea observaciones artificiales.
+
+#### Interpretación metodológica
+
+Las ventanas móviles aumentan el tamaño de la muestra histórica bajo una hipótesis de **estacionariedad local**: se supone que episodios cercanos en el calendario, por ejemplo finales de marzo y comienzos de abril, pueden considerarse suficientemente comparables para representar la dependencia temporal de un forecast de abril.
+
+El parámetro `window_radius_days` controla directamente ese compromiso:
+
+- un radio pequeño mantiene una comparación estacional más estricta, pero entrega menos candidatos;
+- un radio grande aumenta la población disponible, pero incorpora episodios más alejados de la fecha objetivo.
+
+El parámetro `min_start_distance_days` controla otro compromiso:
+
+- valores pequeños permiten más ventanas solapadas y facilitan alcanzar un `L` grande;
+- valores mayores reducen redundancia entre ventanas del mismo año, pero disminuyen la cantidad disponible.
+
+Este método no debe confundirse con **Analog Schaake Shuffle**. En `moving_window` la selección se basa en proximidad estacional de fechas. En una futura implementación Analog Schaake Shuffle, las ventanas se seleccionarían además por similitud entre sus contextos históricos previos y el contexto actual entregado a TimesFM.
+
+La selección histórica es independiente del núcleo de Schaake Shuffle: cambiar `L`, `window_radius_days` o el método histórico modifica la biblioteca de ranks, pero no la implementación matemática del shuffle.
 
 ## Salidas
 
@@ -237,6 +431,16 @@ visualize-wind-scenarios `
     --all_quantiles `
     --export_all
 ```
+
+## Documento metodológico en LaTeX
+
+La metodología de Schaake Shuffle también se incluye en formato LaTeX:
+
+```text
+docs/Metodologia_Schaake_Shuffle.tex
+```
+
+El archivo es autocontenido y puede cargarse directamente en Overleaf como `main.tex`. Conserva la organización, ecuaciones, tablas y ejemplo numérico del documento metodológico en PDF.
 
 ## Decisiones metodológicas actuales
 
