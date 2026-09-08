@@ -1,0 +1,564 @@
+Metadata-Version: 2.4
+Name: wind-scenarios-timesfm
+Version: 0.1.0
+Summary: Wind scenario generation with zero-shot TimesFM 2.5 and Schaake Shuffle.
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: matplotlib
+Requires-Dist: torch
+Requires-Dist: transformers<6,>=5.16.1
+Provides-Extra: finetuning
+Requires-Dist: peft; extra == "finetuning"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+
+# Experimentos TimesFM — Generación de escenarios de viento
+
+Repositorio para experimentar con **TimesFM 2.5** sobre velocidad media diaria del viento y construir **trayectorias probabilísticas temporalmente coherentes** mediante **Schaake Shuffle**.
+
+La prioridad actual del proyecto es el pipeline **zero-shot TimesFM + Schaake Shuffle**. El fine-tuning con LoRA se conserva como experimento separado para una etapa posterior.
+
+## Objetivo
+
+TimesFM entrega pronósticos marginales por día, en este proyecto Q10, Q20, ..., Q90. Por sí solos esos cuantiles no forman trayectorias temporales. Schaake Shuffle utiliza patrones de ranks de trayectorias históricas completas para imponer una estructura de dependencia temporal sobre las marginales futuras.
+
+El flujo principal es:
+
+```text
+Contexto observado (32 días)
+          |
+          v
+TimesFM 2.5 zero-shot
+Q10,...,Q90 para 28 días
+          |
+          +-----------------------+
+                                  |
+Histórico 1980-2013               |
+trayectorias completas de 28 días |
+          |                       |
+          v                       |
+ranks históricos por día          |
+          |                       |
+          +-----------+-----------+
+                      v
+               Schaake Shuffle
+                      |
+                      v
+                L escenarios x 28
+```
+
+El target observado del período pronosticado **no participa en la generación**. Se utiliza solamente después, para evaluación ex-post y visualización.
+
+## Estructura del repositorio
+
+```text
+ExperimentosTimesFM/
+├── README.md
+├── pyproject.toml
+├── .gitignore
+│
+├── data/
+│   └── .gitkeep
+│
+├── outputs/
+│   └── .gitkeep
+│
+├── docs/
+│   ├── Metodologia_Schaake_Shuffle.pdf
+│   └── Metodologia_Schaake_Shuffle.tex
+│
+├── src/
+│   └── wind_scenarios/
+│       ├── __init__.py
+│       ├── data.py
+│       ├── forecasting.py
+│       ├── historical.py
+│       ├── schaake.py
+│       └── cli/
+│           ├── generate.py
+│           └── visualize.py
+│
+├── scripts/
+│   ├── preprocess_wind_ab.py
+│   └── diagnostics/
+│       ├── check_timesfm_installation.py
+│       ├── check_timesfm_channels.py
+│       ├── inspect_data.py
+│       └── plot_data_overview.py
+│
+├── experiments/
+│   └── finetuning/
+│       ├── train_lora.py
+│       └── evaluate_test.py
+│
+└── tests/
+    └── test_schaake.py
+```
+
+### Módulos principales
+
+- `data.py`: carga del dataset diario, validación de continuidad temporal y definición de splits/ventanas.
+- `forecasting.py`: extracción de todos los cuantiles disponibles de TimesFM en una matriz `H x K`.
+- `historical.py`: construcción y selección flexible de trayectorias históricas para Schaake Shuffle.
+- `schaake.py`: cálculo de ranks, discretización de marginales y construcción final de escenarios.
+- `cli/generate.py`: pipeline completo de generación zero-shot.
+- `cli/visualize.py`: visualización de fan plots o escenarios individuales; siempre muestra el contexto utilizado por TimesFM.
+
+Los scripts de fine-tuning se mantienen en `experiments/finetuning/` para no mezclar el pipeline estable actual con experimentos futuros.
+
+### Diagnósticos auxiliares
+
+Los scripts de `scripts/diagnostics/` no forman parte del pipeline principal; sirven para verificar el entorno y explorar los datos:
+
+- `check_timesfm_installation.py`: smoke test de TimesFM 2.5 con una serie artificial; verifica carga del modelo e inferencia básica.
+- `check_timesfm_channels.py`: diagnóstico de canales de `full_predictions` sobre WIND, incluyendo la comparación entre el canal 0 y Q50.
+- `inspect_data.py`: resumen del dataset diario procesado, estadísticas y gaps de calendario.
+- `plot_data_overview.py`: gráfico comparativo de los primeros cinco y últimos cinco años de la serie diaria.
+
+Ejemplos:
+
+```powershell
+uv run python scripts\diagnostics\check_timesfm_installation.py
+uv run python scripts\diagnostics\check_timesfm_channels.py
+uv run python scripts\diagnostics\inspect_data.py
+uv run python scripts\diagnostics\plot_data_overview.py
+```
+
+## Datos
+
+El código espera por defecto:
+
+```text
+data/wind_ab_daily.csv
+```
+
+con columnas:
+
+```text
+DATE,WIND
+```
+
+La serie diaria usada en los experimentos actuales cubre 1980-2017. La configuración existente separa:
+
+- desarrollo: 1980-2013;
+- test: 2014-2017.
+
+
+Si se parte del archivo horario `data/wind_hourly.csv`, el preprocesamiento se ejecuta con:
+
+```powershell
+uv run python scripts\preprocess_wind_ab.py
+```
+
+El script calcula medias diarias sólo para días observados completos de 24 horas y reporta discontinuidades de calendario sin interpolarlas silenciosamente.
+
+## Instalación y manejo del entorno con uv
+
+Este repositorio usa **uv** como gestor de entorno y dependencias. No es necesario crear el entorno con `python -m venv` ni instalar el proyecto con `pip install -e .`.
+
+Desde la raíz del repositorio:
+
+```powershell
+uv sync
+```
+
+`uv sync` crea o actualiza automáticamente el entorno local `.venv`, instala el paquete del proyecto y sincroniza las dependencias declaradas en `pyproject.toml`.
+
+La versión de `transformers` se restringe a:
+
+```text
+transformers>=5.16.1,<6
+```
+
+porque `5.16.1` fue verificada en este proyecto.
+
+### Regla de ejecución
+
+Los comandos del repositorio deben ejecutarse con `uv run`:
+
+```powershell
+uv run generate-wind-scenarios ...
+uv run visualize-wind-scenarios ...
+uv run python scripts\...
+```
+
+Esto evita que PowerShell utilice accidentalmente un ejecutable instalado en el Python global de Windows.
+
+Por ejemplo, se debe preferir:
+
+```powershell
+uv run generate-wind-scenarios --origin 2014-04-01 --historical_method same_calendar_date
+```
+
+
+### Dependencias opcionales
+
+Para incluir las dependencias del experimento de fine-tuning:
+
+```powershell
+uv sync --extra finetuning
+```
+
+Para instalar las dependencias de desarrollo y ejecutar los tests:
+
+```powershell
+uv sync --extra dev
+uv run pytest
+```
+
+Después de modificar dependencias en `pyproject.toml`, basta con volver a ejecutar:
+
+```powershell
+uv sync
+```
+
+`uv` actualizará el entorno y el archivo `uv.lock` correspondiente.
+
+## Generación de escenarios
+
+### Caso A: una trayectoria histórica por año
+
+Para pronosticar el 1-28 de abril de 2014 usando los 34 abriles disponibles entre 1980 y 2013:
+
+```powershell
+uv run generate-wind-scenarios --origin 2014-04-01 --historical_method same_calendar_date
+```
+
+También puede ejecutarse directamente como módulo:
+
+```powershell
+uv run python -m wind_scenarios.cli.generate --origin 2014-04-01 --historical_method same_calendar_date
+```
+
+El contexto suministrado a TimesFM es siempre el bloque de 32 días inmediatamente anterior al origen. Para `2014-04-01` es `2014-02-28` a `2014-03-31`.
+
+### Caso B: más de una trayectoria por año mediante ventanas móviles
+
+Cuando se usa `same_calendar_date`, para un origen como `2014-04-01` existe como máximo una trayectoria candidata por año histórico:
+
+```text
+1980-04-01 -> 1980-04-28
+1981-04-01 -> 1981-04-28
+...
+2013-04-01 -> 2013-04-28
+```
+
+Con 1980-2013 esto produce, idealmente, `L = 34` trayectorias. Si se desean más escenarios, el método `moving_window` aumenta la biblioteca histórica permitiendo que la ventana de 28 días comience algunos días antes o después de la fecha estacional de referencia.
+
+#### Cómo se construyen las ventanas móviles
+
+Para cada año histórico `y` se define primero una **fecha ancla** con el mismo mes y día que el origen del forecast. Para un origen `2014-04-01`, las fechas ancla son:
+
+```text
+1980-04-01
+1981-04-01
+...
+2013-04-01
+```
+
+Si `window_radius_days = R`, se consideran como posibles inicios:
+
+```text
+fecha_ancla - R, ..., fecha_ancla, ..., fecha_ancla + R
+```
+
+Por ejemplo, con:
+
+```text
+R = 15
+H = 28
+```
+
+para cada año se generan candidatos aproximadamente desde:
+
+```text
+17 de marzo -> 13 de abril
+18 de marzo -> 14 de abril
+...
+ 1 de abril -> 28 de abril
+...
+16 de abril -> 13 de mayo
+```
+
+Cada fila sigue siendo una **trayectoria histórica completa de 28 días consecutivos**. No se seleccionan días independientes ni se mezclan años dentro de una misma trayectoria.
+
+En términos de fechas:
+
+```text
+start(y,d) = anchor(y) + d,     d = -R,...,R
+end(y,d)   = start(y,d) + H - 1
+```
+
+Antes de aplicar filtros, el número máximo de candidatos es aproximadamente:
+
+```text
+n_años * (2R + 1)
+```
+
+Para 34 años y `R = 15`:
+
+```text
+34 * 31 = 1054 candidatos potenciales
+```
+
+Esto **no significa que se usarán 1054 escenarios**. Primero se construye la biblioteca de candidatos válidos y después se seleccionan exactamente `L` trayectorias si se especifica `--n_scenarios`.
+
+#### Filtros aplicados a los candidatos
+
+Una ventana candidata se descarta si:
+
+1. no contiene exactamente `H = 28` observaciones;
+2. cruza un gap de calendario;
+3. alguno de sus días no está disponible en el dataset;
+4. la trayectoria completa queda fuera del período histórico permitido.
+
+Por tanto, los escenarios nunca se construyen rellenando o interpolando silenciosamente ventanas históricas incompletas.
+
+#### Cómo se eligen las `L` trayectorias
+
+Con la estrategia por defecto:
+
+```text
+selection = closest
+```
+
+las ventanas se priorizan por cercanía estacional al origen:
+
+```text
+offset 0 días
+offset +/-1 día
+offset +/-2 días
+...
+```
+
+Las ventanas que empiezan exactamente el 1 de abril tienen prioridad sobre las que empiezan el 31 de marzo o 2 de abril, y éstas tienen prioridad sobre ventanas progresivamente más alejadas.
+
+El parámetro:
+
+```text
+--min_start_distance_days
+```
+
+controla cuánto pueden parecerse dos ventanas seleccionadas dentro de un mismo año. Sin ninguna restricción podrían seleccionarse simultáneamente:
+
+```text
+01 abril -> 28 abril
+02 abril -> 29 abril
+03 abril -> 30 abril
+```
+
+Estas trayectorias comparten casi todos sus datos y aportarían poca diversidad adicional.
+
+Con:
+
+```text
+--min_start_distance_days 7
+```
+
+dos ventanas seleccionadas del mismo año deben tener fechas de inicio separadas por al menos siete días. El filtro se aplica **dentro de cada año**; ventanas de años diferentes no compiten por esta distancia.
+
+#### Ejemplo: 100 escenarios
+
+```powershell
+uv run generate-wind-scenarios `
+    --origin 2014-04-01 `
+    --historical_method moving_window `
+    --n_scenarios 100 `
+    --window_radius_days 15 `
+    --min_start_distance_days 7
+```
+
+El procedimiento es:
+
+```text
+34 años históricos
+        |
+        v
+fecha ancla de cada año
+        |
+        v
+inicios entre -15 y +15 días
+        |
+        v
+ventanas completas de 28 días
+        |
+        v
+eliminar ventanas inválidas
+        |
+        v
+ordenar por cercanía estacional
+        |
+        v
+aplicar separación mínima entre inicios
+        |
+        v
+seleccionar L = 100 trayectorias
+        |
+        v
+calcular ranks y aplicar Schaake Shuffle
+```
+
+Si con la combinación elegida de `window_radius_days` y `min_start_distance_days` no existen suficientes candidatos válidos para alcanzar `L`, el programa falla explícitamente. No duplica trayectorias ni crea observaciones artificiales.
+
+#### Interpretación metodológica
+
+Las ventanas móviles aumentan el tamaño de la muestra histórica bajo una hipótesis de **estacionariedad local**: se supone que episodios cercanos en el calendario, por ejemplo finales de marzo y comienzos de abril, pueden considerarse suficientemente comparables para representar la dependencia temporal de un forecast de abril.
+
+El parámetro `window_radius_days` controla directamente ese compromiso:
+
+- un radio pequeño mantiene una comparación estacional más estricta, pero entrega menos candidatos;
+- un radio grande aumenta la población disponible, pero incorpora episodios más alejados de la fecha objetivo.
+
+El parámetro `min_start_distance_days` controla otro compromiso:
+
+- valores pequeños permiten más ventanas solapadas y facilitan alcanzar un `L` grande;
+- valores mayores reducen redundancia entre ventanas del mismo año, pero disminuyen la cantidad disponible.
+
+Este método no debe confundirse con **Analog Schaake Shuffle**. En `moving_window` la selección se basa en proximidad estacional de fechas. En una futura implementación Analog Schaake Shuffle, las ventanas se seleccionarían además por similitud entre sus contextos históricos previos y el contexto actual entregado a TimesFM.
+
+La selección histórica es independiente del núcleo de Schaake Shuffle: cambiar `L`, `window_radius_days` o el método histórico modifica la biblioteca de ranks, pero no la implementación matemática del shuffle.
+
+## Salidas
+
+Cada origen crea una carpeta bajo:
+
+```text
+outputs/schaake/YYYY-MM-DD/
+```
+
+por ejemplo:
+
+```text
+outputs/schaake/2014-04-01/
+├── context.csv
+├── timesfm_quantiles.csv
+├── historical_trajectories.csv
+├── historical_metadata.csv
+├── historical_ranks.csv
+├── empirical_pseudo_observations.csv
+├── assigned_probabilities.csv
+├── timesfm_discretized_marginals.csv
+└── scenarios.csv
+```
+
+`context.csv` guarda exactamente las observaciones entregadas a TimesFM, lo que permite auditar que no hubo leakage del target.
+
+## Visualización
+
+### Escenario individual con todos los cuantiles
+
+```powershell
+uv run visualize-wind-scenarios `
+    --input_dir outputs\schaake\2014-04-01 `
+    --mode single `
+    --scenario_number 1 `
+    --all_quantiles
+```
+
+El gráfico muestra:
+
+- contexto observado utilizado por TimesFM;
+- origen del forecast;
+- Q10, Q20, ..., Q90;
+- escenario Schaake seleccionado;
+- trayectoria histórica fuente;
+- realización observada, sólo para evaluación.
+
+### Fan plot
+
+```powershell
+uv run visualize-wind-scenarios `
+    --input_dir outputs\schaake\2014-04-01 `
+    --mode fan `
+    --all_quantiles
+```
+
+### Exportar todos los escenarios individualmente
+
+```powershell
+uv run visualize-wind-scenarios `
+    --input_dir outputs\schaake\2014-04-01 `
+    --mode single `
+    --all_quantiles `
+    --export_all
+```
+
+## Documento metodológico en LaTeX
+
+La metodología de Schaake Shuffle también se incluye en formato LaTeX:
+
+```text
+docs/Metodologia_Schaake_Shuffle.tex
+```
+
+El archivo es autocontenido y puede cargarse directamente en Overleaf como `main.tex`. Conserva la organización, ecuaciones, tablas y ejemplo numérico del documento metodológico en PDF.
+
+## Decisiones metodológicas actuales
+
+### 1. Zero-shot primero
+
+La versión principal usa `google/timesfm-2.5-200m-transformers` sin ajuste sobre WIND_AB. Los experimentos LoRA se mantienen separados hasta validar completamente el pipeline zero-shot.
+
+Esto significa que el modelo no se fine-tunea con el período 1980-2013 dentro de este proyecto. No implica por sí solo demostrar que la serie no pudiera haber formado parte del pretraining original de TimesFM.
+
+### 2. Horizonte y contexto
+
+Configuración actual:
+
+```text
+contexto = 32 días
+horizonte = 28 días
+```
+
+### 3. Dependencia temporal
+
+Para cada día `t`, los valores de las `L` trayectorias históricas se ordenan y se calcula el rank de cada trayectoria. Aunque el rank se calcula por columna, cada fila conserva su vector completo de ranks a través de los 28 días. Esa secuencia conjunta es la plantilla ordinal que se transfiere al escenario correspondiente.
+
+La trayectoria histórica aporta **dependencia/ranks**, mientras que TimesFM aporta **magnitudes marginales futuras**.
+
+### 4. Marginales Q10-Q90
+
+TimesFM entrega actualmente Q10-Q90. El modo recomendado es:
+
+```text
+--probability_grid_mode timesfm_support
+```
+
+que discretiza `L` posiciones dentro de `[0.1, 0.9]` y evita extrapolar automáticamente colas no entregadas por TimesFM.
+
+El modo clásico:
+
+```text
+--probability_grid_mode schaake
+```
+
+usa `k/(L+1)`, pero el código falla explícitamente si alguna probabilidad requerida cae fuera del soporte suministrado por TimesFM.
+
+### 5. Quantile crossing
+
+Por defecto:
+
+```text
+--crossing_policy error
+```
+
+La generación se detiene si se detecta crossing. Existe una opción `sort`, pero cualquier corrección debe ser una decisión metodológica explícita.
+
+## Tests
+
+`tests/test_schaake.py` reproduce el ejemplo pequeño de la metodología y verifica que el resultado final preserve exactamente las marginales discretizadas mediante permutación.
+
+```powershell
+uv run pytest
+```
+
+## Próximos pasos
+
+- validación cuantitativa de los escenarios generados;
+- comparación `same_calendar_date` vs `moving_window`;
+- Analog Schaake Shuffle;
+- evaluación de autocorrelación, ramps, persistencia y eventos conjuntos;
+- comparación zero-shot vs TimesFM fine-tuned;
+- tratamiento explícito de colas fuera de Q10-Q90.

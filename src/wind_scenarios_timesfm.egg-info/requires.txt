@@ -1,0 +1,11 @@
+numpy
+pandas
+matplotlib
+torch
+transformers<6,>=5.16.1
+
+[dev]
+pytest
+
+[finetuning]
+peft
