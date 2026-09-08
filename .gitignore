@@ -19,8 +19,8 @@ env/
 Thumbs.db
 
 # Data: keep the directory, not local datasets
-data/*
-!data/.gitkeep
+#data/*
+#!data/.gitkeep
 
 # Generated results / model artifacts
 outputs/*
