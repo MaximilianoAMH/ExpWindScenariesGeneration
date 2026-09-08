@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wind-scenarios-timesfm"
+version = "0.1.0"
+description = "Wind scenario generation with zero-shot TimesFM 2.5 and Schaake Shuffle."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "torch",
+    "transformers",
+]
+
+[project.optional-dependencies]
+finetuning = ["peft"]
+dev = ["pytest"]
+
+[project.scripts]
+generate-wind-scenarios = "wind_scenarios.cli.generate:main"
+visualize-wind-scenarios = "wind_scenarios.cli.visualize:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Data: keep the directory, not local datasets
+data/*
+!data/.gitkeep
+
+# Generated results / model artifacts
+outputs/*
+!outputs/.gitkeep
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Hugging Face / local caches
+.cache/
+huggingface/
+
+# Logs
+*.log
