@@ -1,1 +1,1 @@
-"""Command-line interfaces."""
+"""Command-line interfaces for scenario generation and visualization."""

@@ -143,40 +143,12 @@ def forecast_quantiles(
             f"context must be 1-D, got shape {tuple(context_tensor.shape)}."
         )
 
-    if horizon_len <= 0:
-        raise ValueError(
-            "horizon_len must be a positive integer."
-        )
-
-    if model_context_len <= 0:
-        raise ValueError(
-            "model_context_len must be a positive integer."
-        )
-
-    if model_context_len != int(context_tensor.numel()):
-        raise ValueError(
-            "model_context_len must match the actual number of "
-            "observations in context. "
-            f"Got model_context_len={model_context_len} and "
-            f"len(context)={context_tensor.numel()}."
-        )
-
     input_values = context_tensor.unsqueeze(0)
 
     outputs = model(
         past_values=input_values,
         forecast_context_len=model_context_len,
     )
-
-    available_horizon = int(
-        outputs.full_predictions.shape[1]
-    )
-
-    if horizon_len > available_horizon:
-        raise ValueError(
-            f"Requested horizon_len={horizon_len}, but TimesFM "
-            f"returned only {available_horizon} forecast steps."
-        )
 
     full_predictions = (
         outputs.full_predictions[0, :horizon_len, :]
@@ -247,6 +219,67 @@ def enforce_monotone_quantiles(
     result = QuantileForecast(
         probabilities=forecast.probabilities.copy(),
         values=corrected,
+    )
+    result.validate()
+    return result
+
+
+def apply_value_bounds(
+    forecast: QuantileForecast,
+    *,
+    lower: float | None = None,
+    upper: float | None = None,
+    policy: str = "clip",
+) -> QuantileForecast:
+    """
+    Apply physical bounds to all forecast quantiles.
+
+    For power forecasting, a lower bound of 0 MW is always meaningful. An
+    upper bound can be supplied from the preprocessing metadata, where it is
+    stored as ``effective_capacity_mw``.
+
+    policy:
+        ``clip``  -> clip violating values to the physical bounds.
+        ``error`` -> fail if any quantile violates a bound.
+        ``none``  -> return an unchanged copy.
+    """
+    if policy not in {"clip", "error", "none"}:
+        raise ValueError("policy must be 'clip', 'error', or 'none'.")
+
+    if lower is not None and upper is not None and lower >= upper:
+        raise ValueError("lower must be smaller than upper.")
+
+    values = forecast.values.astype(float, copy=True)
+
+    if policy == "none":
+        return QuantileForecast(
+            probabilities=forecast.probabilities.copy(),
+            values=values,
+        )
+
+    lower_violation = np.zeros_like(values, dtype=bool)
+    upper_violation = np.zeros_like(values, dtype=bool)
+
+    if lower is not None:
+        lower_violation = values < float(lower)
+    if upper is not None:
+        upper_violation = values > float(upper)
+
+    if policy == "error" and (lower_violation.any() or upper_violation.any()):
+        raise ValueError(
+            "TimesFM quantiles violate the configured physical power bounds. "
+            f"lower={lower}, upper={upper}, "
+            f"below={int(lower_violation.sum())}, above={int(upper_violation.sum())}."
+        )
+
+    if lower is not None:
+        values = np.maximum(values, float(lower))
+    if upper is not None:
+        values = np.minimum(values, float(upper))
+
+    result = QuantileForecast(
+        probabilities=forecast.probabilities.copy(),
+        values=values,
     )
     result.validate()
     return result

@@ -1,0 +1,18 @@
+{
+  "source_hourly_file": "C:\\Users\\Maximiliano\\Desktop\\ExpWindScenariesGeneration\\data\\wind_hourly.csv",
+  "power_curve_file": "C:\\Users\\Maximiliano\\Desktop\\ExpWindScenariesGeneration\\data\\power_curves\\alto_baguales_3p5mw.csv",
+  "target_column": "POWER_MW",
+  "energy_column": "ENERGY_MWH",
+  "turbine_model": "Enercon E-138 EP3",
+  "hub_height_m": 120.0,
+  "rated_power_mw_per_turbine": 3.5,
+  "cut_out_speed_ms": 28.0,
+  "n_turbines": 1.0,
+  "availability": 1.0,
+  "electrical_efficiency": 1.0,
+  "effective_capacity_mw": 3.5,
+  "hourly_rows": 331968,
+  "daily_rows": 13832,
+  "daily_aggregation": "mean hourly power over complete 24-hour days",
+  "energy_definition": "sum of 24 hourly POWER_MW values times 1 hour"
+}

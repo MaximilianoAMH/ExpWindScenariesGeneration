@@ -5,33 +5,18 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .data import is_daily_continuous
+from .data import DEFAULT_TARGET_COLUMN, is_daily_continuous
 
 
 @dataclass(frozen=True)
 class HistoricalTrajectorySet:
-    """
-    Selected historical trajectories for Schaake Shuffle.
+    """Selected historical trajectories used as Schaake rank templates."""
 
-    Attributes
-    ----------
-    values:
-        Matrix with shape (L, H). Each row is one complete
-        historical trajectory.
-
-    metadata:
-        One row per trajectory with start/end dates and seasonal offset.
-
-    method:
-        Selection method used.
-
-    forecast_origin:
-        Forecast origin whose seasonality is being matched.
-    """
     values: np.ndarray
     metadata: pd.DataFrame
     method: str
     forecast_origin: pd.Timestamp
+    value_column: str = DEFAULT_TARGET_COLUMN
 
     @property
     def n_trajectories(self) -> int:
@@ -46,12 +31,6 @@ def _historical_anchor(
     year: int,
     forecast_origin: pd.Timestamp,
 ) -> pd.Timestamp | None:
-    """
-    Map the forecast origin's month/day into a historical year.
-
-    Returns None when the date does not exist in that year
-    (e.g. Feb 29 in a non-leap year).
-    """
     try:
         return pd.Timestamp(
             year=year,
@@ -66,44 +45,22 @@ def _extract_window(
     df_indexed: pd.DataFrame,
     start: pd.Timestamp,
     horizon_len: int,
+    *,
+    value_column: str,
 ) -> tuple[np.ndarray, pd.Timestamp] | None:
-    """
-    Extract one H-day calendar-continuous historical trajectory.
-
-    Returns None if:
-      - any required date is missing,
-      - the window is not daily-continuous,
-      - the window length is not H.
-    """
     end = start + pd.Timedelta(days=horizon_len - 1)
-
-    expected_dates = pd.date_range(
-        start,
-        end,
-        freq="D",
-    )
+    expected_dates = pd.date_range(start, end, freq="D")
 
     if not expected_dates.isin(df_indexed.index).all():
         return None
 
-    part = df_indexed.loc[
-        expected_dates,
-        ["WIND"],
-    ]
-
+    part = df_indexed.loc[expected_dates, [value_column]]
     dates = pd.DatetimeIndex(part.index)
 
-    if len(part) != horizon_len:
+    if len(part) != horizon_len or not is_daily_continuous(dates):
         return None
 
-    if not is_daily_continuous(dates):
-        return None
-
-    values = part["WIND"].to_numpy(
-        dtype=np.float32,
-        copy=True,
-    )
-
+    values = part[value_column].to_numpy(dtype=np.float32, copy=True)
     return values, end
 
 
@@ -115,143 +72,56 @@ def build_historical_candidates(
     history_end_year: int = 2013,
     method: str = "same_calendar_date",
     window_radius_days: int = 15,
+    *,
+    value_column: str = DEFAULT_TARGET_COLUMN,
 ) -> tuple[np.ndarray, pd.DataFrame]:
-    """
-    Build all valid candidate trajectories before selecting L.
-
-    Parameters
-    ----------
-    df:
-        Daily dataframe with DATE and WIND.
-
-    forecast_origin:
-        First future day of the forecast horizon.
-
-    horizon_len:
-        Length H of each historical trajectory.
-
-    history_start_year, history_end_year:
-        Historical library boundaries. For a strict 2014-2017
-        out-of-sample experiment, use 1980-2013.
-
-    method:
-        "same_calendar_date"
-            One candidate per historical year, beginning on the same
-            month/day as the forecast origin.
-
-            Example for 2014-04-01:
-                1980-04-01 ... 2013-04-01
-
-        "moving_window"
-            Candidate starts are allowed within +/- window_radius_days
-            around the corresponding historical anchor date.
-
-            Example with radius 15 for an April 1 forecast:
-                approximately Mar 17 ... Apr 16 in each historical year.
-
-    window_radius_days:
-        Used only for method="moving_window".
-
-    Returns
-    -------
-    candidate_values:
-        Shape (N_candidates, H).
-
-    candidate_metadata:
-        Metadata for every valid candidate.
-    """
+    """Build all valid historical power trajectories before selecting L."""
     forecast_origin = pd.Timestamp(forecast_origin).normalize()
 
     if horizon_len <= 0:
         raise ValueError("horizon_len must be positive.")
-
     if history_start_year > history_end_year:
-        raise ValueError(
-            "history_start_year must be <= history_end_year."
-        )
-
-    if method not in {
-        "same_calendar_date",
-        "moving_window",
-    }:
+        raise ValueError("history_start_year must be <= history_end_year.")
+    if method not in {"same_calendar_date", "moving_window"}:
         raise ValueError(
             "method must be 'same_calendar_date' or 'moving_window'."
         )
-
     if window_radius_days < 0:
-        raise ValueError(
-            "window_radius_days must be >= 0."
-        )
+        raise ValueError("window_radius_days must be >= 0.")
 
-    required_columns = {"DATE", "WIND"}
-    missing = required_columns.difference(df.columns)
-
+    required = {"DATE", value_column}
+    missing = required.difference(df.columns)
     if missing:
-        raise ValueError(
-            f"Missing required columns: {sorted(missing)}."
-        )
+        raise ValueError(f"Missing required columns: {sorted(missing)}.")
 
-    working = df.loc[
-        :,
-        ["DATE", "WIND"],
-    ].copy()
-
-    working["DATE"] = pd.to_datetime(
-        working["DATE"],
-        errors="raise",
-    ).dt.normalize()
-
-    working = (
-        working
-        .sort_values("DATE")
-        .set_index("DATE")
-    )
+    working = df[["DATE", value_column]].copy()
+    working["DATE"] = pd.to_datetime(working["DATE"], errors="raise").dt.normalize()
+    working = working.sort_values("DATE").set_index("DATE")
 
     if working.index.duplicated().any():
-        raise ValueError(
-            "Historical dataframe contains duplicated DATE values."
-        )
+        raise ValueError("Historical dataframe contains duplicated DATE values.")
 
-    history_start = pd.Timestamp(
-        year=history_start_year,
-        month=1,
-        day=1,
-    )
-    history_end = pd.Timestamp(
-        year=history_end_year,
-        month=12,
-        day=31,
-    )
+    history_start = pd.Timestamp(year=history_start_year, month=1, day=1)
+    history_end = pd.Timestamp(year=history_end_year, month=12, day=31)
 
     values_rows: list[np.ndarray] = []
     metadata_rows: list[dict[str, object]] = []
 
-    for year in range(
-        history_start_year,
-        history_end_year + 1,
-    ):
-        anchor = _historical_anchor(
-            year,
-            forecast_origin,
-        )
-
+    for year in range(history_start_year, history_end_year + 1):
+        anchor = _historical_anchor(year, forecast_origin)
         if anchor is None:
             continue
 
-        if method == "same_calendar_date":
-            offsets = [0]
-        else:
-            offsets = range(
-                -window_radius_days,
-                window_radius_days + 1,
-            )
+        offsets = (
+            [0]
+            if method == "same_calendar_date"
+            else range(-window_radius_days, window_radius_days + 1)
+        )
 
         for offset in offsets:
             start = anchor + pd.Timedelta(days=int(offset))
             end = start + pd.Timedelta(days=horizon_len - 1)
 
-            # Strictly keep the whole historical trajectory inside
-            # the historical library.
             if start < history_start or end > history_end:
                 continue
 
@@ -259,46 +129,33 @@ def build_historical_candidates(
                 working,
                 start=start,
                 horizon_len=horizon_len,
+                value_column=value_column,
             )
-
             if extracted is None:
                 continue
 
             values, end = extracted
-
             values_rows.append(values)
-
             metadata_rows.append(
                 {
                     "trajectory_year": year,
                     "anchor_date": anchor,
                     "start_date": start,
                     "end_date": end,
-                    "seasonal_offset_days": int(
-                        (start - anchor).days
-                    ),
-                    "abs_seasonal_offset_days": abs(
-                        int((start - anchor).days)
-                    ),
+                    "seasonal_offset_days": int((start - anchor).days),
+                    "abs_seasonal_offset_days": abs(int((start - anchor).days)),
                 }
             )
 
     if not values_rows:
         raise ValueError(
-            "No valid historical trajectories were found "
-            "for the requested configuration."
+            "No valid historical trajectories were found for the requested configuration."
         )
 
-    candidate_values = np.vstack(values_rows).astype(
-        np.float32,
-        copy=False,
+    return (
+        np.vstack(values_rows).astype(np.float32, copy=False),
+        pd.DataFrame(metadata_rows),
     )
-
-    candidate_metadata = pd.DataFrame(
-        metadata_rows
-    )
-
-    return candidate_values, candidate_metadata
 
 
 def _greedy_select_with_min_distance(
@@ -307,50 +164,28 @@ def _greedy_select_with_min_distance(
     n_trajectories: int | None,
     min_start_distance_days: int,
 ) -> np.ndarray:
-    """
-    Greedy selection respecting a minimum start-date distance
-    between selected trajectories within the same historical year.
-    """
     selected: list[int] = []
     selected_starts_by_year: dict[int, list[pd.Timestamp]] = {}
 
     for idx in order:
         row = metadata.iloc[int(idx)]
-
         year = int(row["trajectory_year"])
         start = pd.Timestamp(row["start_date"])
+        previous = selected_starts_by_year.get(year, [])
 
-        previous = selected_starts_by_year.get(
-            year,
-            [],
-        )
-
-        if min_start_distance_days > 0:
-            too_close = any(
-                abs((start - other).days)
-                < min_start_distance_days
-                for other in previous
-            )
-
-            if too_close:
-                continue
+        if min_start_distance_days > 0 and any(
+            abs((start - other).days) < min_start_distance_days
+            for other in previous
+        ):
+            continue
 
         selected.append(int(idx))
-        selected_starts_by_year.setdefault(
-            year,
-            [],
-        ).append(start)
+        selected_starts_by_year.setdefault(year, []).append(start)
 
-        if (
-            n_trajectories is not None
-            and len(selected) >= n_trajectories
-        ):
+        if n_trajectories is not None and len(selected) >= n_trajectories:
             break
 
-    return np.asarray(
-        selected,
-        dtype=np.int64,
-    )
+    return np.asarray(selected, dtype=np.int64)
 
 
 def select_historical_trajectories(
@@ -366,99 +201,34 @@ def select_historical_trajectories(
     min_start_distance_days: int = 0,
     seed: int = 42,
     strict_n: bool = True,
+    *,
+    value_column: str = DEFAULT_TARGET_COLUMN,
 ) -> HistoricalTrajectorySet:
-    """
-    Flexible historical trajectory selector for Schaake Shuffle.
-
-    Parameters
-    ----------
-    n_trajectories:
-        Desired L.
-
-        If None:
-            return every candidate that survives the selection rules.
-
-        Examples:
-            same_calendar_date + n_trajectories=None
-                -> typically one trajectory per historical year.
-
-            moving_window + n_trajectories=100
-                -> select 100 seasonal moving windows.
-
-    method:
-        "same_calendar_date"
-        "moving_window"
-
-    selection:
-        "closest"
-            Prefer starts with the smallest absolute seasonal offset.
-            Deterministic.
-
-        "random"
-            Randomized candidate order using `seed`, then greedily
-            enforce min_start_distance_days.
-
-    min_start_distance_days:
-        Minimum separation between selected START dates belonging
-        to the same historical year.
-
-        Example:
-            0  -> overlapping windows are allowed.
-            7  -> selected starts in the same year must be at least
-                  7 days apart.
-
-    strict_n:
-        If True and fewer than L trajectories can be selected,
-        raise an error.
-
-        If False, return as many as are available.
-
-    Returns
-    -------
-    HistoricalTrajectorySet
-        values shape = (L, H)
-    """
+    """Select L complete historical POWER_MW trajectories for Schaake Shuffle."""
     if n_trajectories is not None and n_trajectories <= 0:
-        raise ValueError(
-            "n_trajectories must be positive or None."
-        )
-
+        raise ValueError("n_trajectories must be positive or None.")
     if min_start_distance_days < 0:
-        raise ValueError(
-            "min_start_distance_days must be >= 0."
-        )
-
+        raise ValueError("min_start_distance_days must be >= 0.")
     if selection not in {"closest", "random"}:
-        raise ValueError(
-            "selection must be 'closest' or 'random'."
-        )
+        raise ValueError("selection must be 'closest' or 'random'.")
 
-    candidate_values, candidate_metadata = (
-        build_historical_candidates(
-            df=df,
-            forecast_origin=forecast_origin,
-            horizon_len=horizon_len,
-            history_start_year=history_start_year,
-            history_end_year=history_end_year,
-            method=method,
-            window_radius_days=window_radius_days,
-        )
+    candidate_values, candidate_metadata = build_historical_candidates(
+        df=df,
+        forecast_origin=forecast_origin,
+        horizon_len=horizon_len,
+        history_start_year=history_start_year,
+        history_end_year=history_end_year,
+        method=method,
+        window_radius_days=window_radius_days,
+        value_column=value_column,
     )
 
     n_candidates = len(candidate_metadata)
 
     if selection == "closest":
-        # Stable deterministic ordering:
-        #   1) closest to the target season,
-        #   2) historical year,
-        #   3) start date.
         order = (
             candidate_metadata
-            .assign(
-                _candidate_index=np.arange(
-                    n_candidates
-                )
-            )
+            .assign(_candidate_index=np.arange(n_candidates))
             .sort_values(
                 [
                     "abs_seasonal_offset_days",
@@ -469,7 +239,6 @@ def select_historical_trajectories(
             )["_candidate_index"]
             .to_numpy(dtype=np.int64)
         )
-
     else:
         rng = np.random.default_rng(seed)
         order = rng.permutation(n_candidates)
@@ -487,45 +256,30 @@ def select_historical_trajectories(
         and strict_n
     ):
         raise ValueError(
-            "Could not select the requested number of historical "
-            f"trajectories. Requested L={n_trajectories}, "
-            f"selected={len(selected_idx)}, "
-            f"raw candidates={n_candidates}. "
-            "Increase window_radius_days, reduce "
-            "min_start_distance_days, or set strict_n=False."
+            "Could not select the requested number of historical trajectories. "
+            f"Requested L={n_trajectories}, selected={len(selected_idx)}, "
+            f"raw candidates={n_candidates}. Increase window_radius_days or "
+            "reduce min_start_distance_days."
         )
 
-    selected_values = candidate_values[
-        selected_idx,
-        :
-    ]
-
+    selected_values = candidate_values[selected_idx, :]
     selected_metadata = (
-        candidate_metadata
-        .iloc[selected_idx]
-        .copy()
-        .reset_index(drop=True)
+        candidate_metadata.iloc[selected_idx].copy().reset_index(drop=True)
     )
-
     selected_metadata.insert(
         0,
         "trajectory_id",
-        [
-            f"hist_{i + 1:03d}"
-            for i in range(len(selected_metadata))
-        ],
+        [f"hist_{i + 1:03d}" for i in range(len(selected_metadata))],
     )
-
     selected_metadata["selection_rank"] = np.arange(
-        1,
-        len(selected_metadata) + 1,
+        1, len(selected_metadata) + 1
     )
+    selected_metadata["value_column"] = value_column
 
     return HistoricalTrajectorySet(
         values=selected_values,
         metadata=selected_metadata,
         method=method,
-        forecast_origin=pd.Timestamp(
-            forecast_origin
-        ).normalize(),
+        forecast_origin=pd.Timestamp(forecast_origin).normalize(),
+        value_column=value_column,
     )

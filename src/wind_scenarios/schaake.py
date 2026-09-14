@@ -470,6 +470,8 @@ def save_schaake_result(
     result: SchaakeResult,
     output_dir: str | Path,
     forecast_dates: pd.DatetimeIndex | None = None,
+    *,
+    scenarios_filename: str = "scenarios.csv",
 ) -> None:
     """
     Save the main Schaake artifacts as CSV files for auditability.
@@ -514,7 +516,7 @@ def save_schaake_result(
     )
     scenarios_df.index.name = "scenario_id"
     scenarios_df.to_csv(
-        output_dir / "scenarios.csv"
+        output_dir / scenarios_filename
     )
 
     ranks_df = pd.DataFrame(
