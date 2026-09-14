@@ -8,6 +8,11 @@ import numpy as np
 import pandas as pd
 
 from ..data import DEFAULT_DATA_PATH, load_wind_dataframe
+from ..power import (
+    DEFAULT_ALTO_BAGUALES_CURVE,
+    DEFAULT_RATED_POWER_MW,
+    load_power_curve,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,9 +27,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data_path", type=Path, default=DEFAULT_DATA_PATH)
     parser.add_argument(
         "--mode",
-        choices=["fan", "single"],
+        choices=[
+            "fan",
+            "single",
+            "wind_power",
+            "power_curve",
+        ],
         default="single",
-        help="Plot all scenarios or one scenario.",
+        help=(
+            "fan: all wind scenarios; "
+            "single: one wind scenario; "
+            "wind_power: generated wind and calculated power vs date; "
+            "power_curve: generated wind-power pairs over the turbine curve."
+        ),
     )
     parser.add_argument("--scenario_id", type=str, default=None)
     parser.add_argument("--scenario_number", type=int, default=None)
@@ -37,6 +52,21 @@ def parse_args() -> argparse.Namespace:
         "--export_all",
         action="store_true",
         help="In single mode, export one figure per scenario.",
+    )
+    parser.add_argument(
+        "--power_curve",
+        type=Path,
+        default=DEFAULT_ALTO_BAGUALES_CURVE,
+        help="Power-curve CSV used by power_curve mode.",
+    )
+    parser.add_argument(
+        "--rated_power_mw",
+        type=float,
+        default=DEFAULT_RATED_POWER_MW,
+        help=(
+            "Turbine rated power used to load the curve. "
+            f"Default: {DEFAULT_RATED_POWER_MW} MW."
+        ),
     )
     parser.add_argument("--show", action="store_true")
     return parser.parse_args()
@@ -55,6 +85,10 @@ def load_outputs(input_dir: Path) -> dict[str, pd.DataFrame | None]:
             raise FileNotFoundError(f"Missing {name}: {path}")
 
     context_path = input_dir / "context.csv"
+    power_path = (
+        input_dir
+        / "power_scenarios_alto_baguales.csv"
+    )
 
     return {
         "scenarios": pd.read_csv(
@@ -73,6 +107,14 @@ def load_outputs(input_dir: Path) -> dict[str, pd.DataFrame | None]:
         "context": (
             pd.read_csv(context_path, parse_dates=["DATE"])
             if context_path.exists()
+            else None
+        ),
+        "power_scenarios": (
+            pd.read_csv(
+                power_path,
+                index_col="scenario_id",
+            )
+            if power_path.exists()
             else None
         ),
     }
@@ -206,6 +248,60 @@ def plot_quantiles(
         )
 
 
+def annotate_forecast_origin(
+    ax,
+    origin: pd.Timestamp,
+) -> None:
+    """
+    Draw the forecast-origin line without adding it to the legend.
+
+    The meaning of the vertical dashed line is communicated directly
+    through an annotation placed next to the line.
+    """
+    ax.axvline(
+        origin,
+        linestyle="--",
+        linewidth=1.2,
+        alpha=0.85,
+        label="_nolegend_",
+    )
+
+    ax.annotate(
+        f"Forecast origin\n{origin.date()}",
+        xy=(origin, 1.0),
+        xycoords=("data", "axes fraction"),
+        xytext=(6, -10),
+        textcoords="offset points",
+        ha="left",
+        va="top",
+        fontsize=9,
+        bbox={
+            "boxstyle": "round,pad=0.25",
+            "facecolor": "white",
+            "alpha": 0.88,
+            "edgecolor": "none",
+        },
+    )
+
+
+def place_legend_lower_left(ax) -> None:
+    """
+    Place the legend inside the plotting area, in the lower-left corner.
+
+    This restores the original compact layout and avoids shrinking the
+    plotting area horizontally. The forecast-origin annotation remains
+    separate from the legend.
+    """
+    ax.legend(
+        loc="lower left",
+        bbox_to_anchor=(0.01, 0.02),
+        borderaxespad=0.0,
+        frameon=True,
+        framealpha=0.90,
+        fontsize=9,
+    )
+
+
 def plot_fan(
     scenarios: pd.DataFrame,
     quantiles: pd.DataFrame,
@@ -246,14 +342,12 @@ def plot_fan(
         forecast_dates,
         observed,
         linewidth=2.6,
-        label="Observed WIND (evaluation only)",
+        label="Wind Ground Truth",
     )
 
-    ax.axvline(
-        origin,
-        linestyle="--",
-        linewidth=1.2,
-        label="Forecast origin",
+    annotate_forecast_origin(
+        ax=ax,
+        origin=origin,
     )
 
     ax.set_title(
@@ -263,12 +357,25 @@ def plot_fan(
     ax.set_xlabel("Date")
     ax.set_ylabel("Daily mean WIND")
     ax.grid(alpha=0.25)
-    ax.legend(ncol=2, fontsize=9)
+
+    place_legend_lower_left(ax)
 
     fig.autofmt_xdate()
-    fig.tight_layout()
+
+    # The legend is inside the axes, so the full horizontal area can be used.
+    fig.subplots_adjust(
+        left=0.08,
+        right=0.98,
+        bottom=0.18,
+        top=0.90,
+    )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=180)
+    fig.savefig(
+        output_path,
+        dpi=180,
+        bbox_inches="tight",
+    )
 
     if show:
         plt.show()
@@ -349,26 +456,27 @@ def plot_single(
         forecast_dates,
         observed,
         linewidth=2.6,
-        label="Observed WIND (evaluation only)",
+        label="Wind Ground Truth",
     )
 
-    ax.axvline(
-        origin,
-        linestyle="--",
-        linewidth=1.2,
-        label="Forecast origin",
+    annotate_forecast_origin(
+        ax=ax,
+        origin=origin,
     )
 
     quantile_label = "Q10-Q90" if all_quantiles else "Q10/Q50/Q90"
+
     ax.set_title(
         "Zero-shot TimesFM + Schaake Shuffle "
-        f"— {scenario_id} — {quantile_label} — source {hist_id}"
+        f"— {scenario_id} — {quantile_label} — source {hist_id}",
+        pad=24,
     )
     ax.set_xlabel("Date")
     ax.set_ylabel("Daily mean WIND")
     ax.grid(alpha=0.25)
-    ax.legend(ncol=2, fontsize=9)
 
+    # Keep the date metadata separated from the legend and from the
+    # forecast-origin annotation.
     subtitle = (
         f"TimesFM context: "
         f"{pd.Timestamp(context['DATE'].iloc[0]).date()} -> "
@@ -379,19 +487,294 @@ def plot_single(
     )
 
     ax.text(
-        0.01,
-        0.01,
+        0.0,
+        1.01,
         subtitle,
         transform=ax.transAxes,
         fontsize=9,
-        verticalalignment="bottom",
-        bbox=dict(alpha=0.15),
+        ha="left",
+        va="bottom",
+    )
+
+    place_legend_lower_left(ax)
+
+    fig.autofmt_xdate()
+
+    # Keep space only for the title/subtitle; no right-side reservation
+    # is needed because the legend is inside the axes.
+    fig.subplots_adjust(
+        left=0.08,
+        right=0.98,
+        bottom=0.18,
+        top=0.84,
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(
+        output_path,
+        dpi=180,
+        bbox_inches="tight",
+    )
+
+    if show:
+        plt.show()
+
+    plt.close(fig)
+
+
+
+def require_power_scenarios(
+    power_scenarios: pd.DataFrame | None,
+    input_dir: Path,
+) -> pd.DataFrame:
+    """
+    Ensure that the post-processed Alto Baguales power scenarios exist.
+    """
+    if power_scenarios is None:
+        expected = (
+            input_dir
+            / "power_scenarios_alto_baguales.csv"
+        )
+        raise FileNotFoundError(
+            "Power scenarios were not found. Expected: "
+            f"{expected}. Run the updated generation pipeline first."
+        )
+
+    return power_scenarios
+
+
+def validate_wind_power_alignment(
+    scenario_id: str,
+    scenarios: pd.DataFrame,
+    power_scenarios: pd.DataFrame,
+    forecast_dates: pd.DatetimeIndex,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return aligned wind and power vectors for one scenario.
+    """
+    if scenario_id not in power_scenarios.index:
+        raise ValueError(
+            f"{scenario_id} is missing from power scenarios."
+        )
+
+    wind_values = scenarios.loc[
+        scenario_id
+    ].to_numpy(dtype=float)
+
+    power_values = power_scenarios.loc[
+        scenario_id
+    ].to_numpy(dtype=float)
+
+    H = len(forecast_dates)
+
+    if len(wind_values) != H:
+        raise ValueError(
+            "Wind scenario length does not match forecast dates."
+        )
+
+    if len(power_values) != H:
+        raise ValueError(
+            "Power scenario length does not match forecast dates."
+        )
+
+    return wind_values, power_values
+
+
+def plot_wind_power(
+    scenario_id: str,
+    scenarios: pd.DataFrame,
+    power_scenarios: pd.DataFrame,
+    quantiles: pd.DataFrame,
+    output_path: Path,
+    show: bool,
+) -> None:
+    """
+    Plot one generated wind trajectory and its calculated power trajectory.
+
+    Both curves share the same forecast dates but use separate y-axes because
+    wind speed [m/s] and electrical power [MW] are different physical units.
+    """
+    forecast_dates = pd.DatetimeIndex(
+        quantiles["DATE"]
+    )
+
+    wind_values, power_values = (
+        validate_wind_power_alignment(
+            scenario_id=scenario_id,
+            scenarios=scenarios,
+            power_scenarios=power_scenarios,
+            forecast_dates=forecast_dates,
+        )
+    )
+
+    fig, ax_wind = plt.subplots(
+        figsize=(15, 7)
+    )
+    ax_power = ax_wind.twinx()
+
+    wind_line = ax_wind.plot(
+        forecast_dates,
+        wind_values,
+        linewidth=2.6,
+        label=f"{scenario_id} — generated wind",
+    )[0]
+
+    power_line = ax_power.plot(
+        forecast_dates,
+        power_values,
+        linewidth=2.6,
+        linestyle="--",
+        label=(
+            f"{scenario_id} — calculated power "
+            "[Alto Baguales]"
+        ),
+    )[0]
+
+    ax_wind.set_title(
+        "Generated wind scenario vs calculated power "
+        f"— {scenario_id}"
+    )
+    ax_wind.set_xlabel("Date")
+    ax_wind.set_ylabel("Wind speed [m/s]")
+    ax_power.set_ylabel("Power [MW]")
+
+    ax_wind.set_ylim(bottom=0.0)
+    ax_power.set_ylim(bottom=0.0)
+
+    ax_wind.grid(alpha=0.25)
+
+    ax_wind.legend(
+        handles=[
+            wind_line,
+            power_line,
+        ],
+        loc="lower left",
+        bbox_to_anchor=(0.01, 0.02),
+        borderaxespad=0.0,
+        frameon=True,
+        framealpha=0.90,
+        fontsize=9,
     )
 
     fig.autofmt_xdate()
-    fig.tight_layout()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=180)
+    fig.subplots_adjust(
+        left=0.08,
+        right=0.90,
+        bottom=0.18,
+        top=0.90,
+    )
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    fig.savefig(
+        output_path,
+        dpi=180,
+        bbox_inches="tight",
+    )
+
+    if show:
+        plt.show()
+
+    plt.close(fig)
+
+
+def plot_power_curve_comparison(
+    scenario_id: str,
+    scenarios: pd.DataFrame,
+    power_scenarios: pd.DataFrame,
+    quantiles: pd.DataFrame,
+    output_path: Path,
+    power_curve_path: Path,
+    rated_power_mw: float,
+    show: bool,
+) -> None:
+    """
+    Plot the turbine wind-to-power transfer curve and the generated
+    scenario's (wind, power) points.
+
+    This is a diagnostic of the deterministic post-processing step:
+
+        wind speed [m/s] -> calculated power [MW]
+    """
+    forecast_dates = pd.DatetimeIndex(
+        quantiles["DATE"]
+    )
+
+    wind_values, power_values = (
+        validate_wind_power_alignment(
+            scenario_id=scenario_id,
+            scenarios=scenarios,
+            power_scenarios=power_scenarios,
+            forecast_dates=forecast_dates,
+        )
+    )
+
+    curve = load_power_curve(
+        power_curve_path,
+        rated_power_mw=rated_power_mw,
+    )
+
+    fig, ax = plt.subplots(
+        figsize=(10, 7)
+    )
+
+    ax.plot(
+        curve.wind_speed_ms,
+        curve.power_kw / 1000.0,
+        linewidth=2.5,
+        label=(
+            "Alto Baguales tabulated/interpolated "
+            "power curve"
+        ),
+    )
+
+    ax.scatter(
+        wind_values,
+        power_values,
+        s=45,
+        alpha=0.75,
+        label=f"{scenario_id} forecast points",
+    )
+
+    ax.set_title(
+        "Generated wind values on the Alto Baguales "
+        f"power curve — {scenario_id}"
+    )
+    ax.set_xlabel("Wind speed [m/s]")
+    ax.set_ylabel("Power [MW]")
+    ax.set_xlim(left=0.0)
+    ax.set_ylim(bottom=0.0)
+    ax.grid(alpha=0.25)
+
+    ax.legend(
+        loc="lower left",
+        bbox_to_anchor=(0.01, 0.02),
+        borderaxespad=0.0,
+        frameon=True,
+        framealpha=0.90,
+        fontsize=9,
+    )
+
+    fig.subplots_adjust(
+        left=0.10,
+        right=0.97,
+        bottom=0.12,
+        top=0.90,
+    )
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    fig.savefig(
+        output_path,
+        dpi=180,
+        bbox_inches="tight",
+    )
 
     if show:
         plt.show()
@@ -407,6 +790,7 @@ def main() -> None:
     quantiles = outputs["quantiles"]
     historical = outputs["historical"]
     metadata = outputs["metadata"]
+    power_scenarios = outputs["power_scenarios"]
 
     assert isinstance(scenarios, pd.DataFrame)
     assert isinstance(quantiles, pd.DataFrame)
@@ -428,6 +812,96 @@ def main() -> None:
         data_path=args.data_path,
         forecast_dates=forecast_dates,
     )
+
+    if args.mode in {
+        "wind_power",
+        "power_curve",
+    }:
+        power_scenarios = require_power_scenarios(
+            power_scenarios=power_scenarios,
+            input_dir=args.input_dir,
+        )
+
+        if args.export_all:
+            output_dir = args.input_dir / (
+                "wind_power_plots"
+                if args.mode == "wind_power"
+                else "power_curve_plots"
+            )
+
+            for sid in scenarios.index:
+                if args.mode == "wind_power":
+                    plot_wind_power(
+                        scenario_id=str(sid),
+                        scenarios=scenarios,
+                        power_scenarios=power_scenarios,
+                        quantiles=quantiles,
+                        output_path=(
+                            output_dir
+                            / f"{sid}_wind_power.png"
+                        ),
+                        show=False,
+                    )
+                else:
+                    plot_power_curve_comparison(
+                        scenario_id=str(sid),
+                        scenarios=scenarios,
+                        power_scenarios=power_scenarios,
+                        quantiles=quantiles,
+                        output_path=(
+                            output_dir
+                            / f"{sid}_power_curve.png"
+                        ),
+                        power_curve_path=args.power_curve,
+                        rated_power_mw=args.rated_power_mw,
+                        show=False,
+                    )
+
+            print(
+                f"Exported {len(scenarios)} figures to: "
+                f"{output_dir}"
+            )
+            return
+
+        scenario_id = normalize_scenario_id(
+            scenarios=scenarios,
+            scenario_id=args.scenario_id,
+            scenario_number=args.scenario_number,
+        )
+
+        if args.mode == "wind_power":
+            output_path = (
+                args.input_dir
+                / f"{scenario_id}_wind_power.png"
+            )
+            plot_wind_power(
+                scenario_id=scenario_id,
+                scenarios=scenarios,
+                power_scenarios=power_scenarios,
+                quantiles=quantiles,
+                output_path=output_path,
+                show=args.show,
+            )
+        else:
+            output_path = (
+                args.input_dir
+                / f"{scenario_id}_power_curve.png"
+            )
+            plot_power_curve_comparison(
+                scenario_id=scenario_id,
+                scenarios=scenarios,
+                power_scenarios=power_scenarios,
+                quantiles=quantiles,
+                output_path=output_path,
+                power_curve_path=args.power_curve,
+                rated_power_mw=args.rated_power_mw,
+                show=args.show,
+            )
+
+        print(
+            f"Saved figure: {output_path}"
+        )
+        return
 
     if args.mode == "fan":
         output_path = args.input_dir / (

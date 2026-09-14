@@ -20,6 +20,14 @@ from ..forecasting import (
 from ..historical import (
     select_historical_trajectories,
 )
+from ..power import (
+    DEFAULT_ALTO_BAGUALES_CURVE,
+    DEFAULT_HUB_HEIGHT_M,
+    DEFAULT_N_TURBINES,
+    DEFAULT_RATED_POWER_MW,
+    DEFAULT_TURBINE_MODEL,
+    save_power_scenarios,
+)
 from ..schaake import (
     schaake_shuffle,
     save_schaake_result,
@@ -154,6 +162,85 @@ def parse_args() -> argparse.Namespace:
         "--tie_break",
         choices=["stable", "random"],
         default="stable",
+    )
+
+    parser.add_argument(
+        "--power_curve",
+        type=Path,
+        default=DEFAULT_ALTO_BAGUALES_CURVE,
+        help=(
+            "Power-curve CSV with wind speed column v [m/s] "
+            "and power column P."
+        ),
+    )
+
+    parser.add_argument(
+        "--rated_power_mw",
+        type=float,
+        default=DEFAULT_RATED_POWER_MW,
+        help=(
+            "Turbine nominal power [MW]. "
+            f"Default Alto Baguales value: {DEFAULT_RATED_POWER_MW} MW."
+        ),
+    )
+
+    parser.add_argument(
+        "--hub_height_m",
+        type=float,
+        default=DEFAULT_HUB_HEIGHT_M,
+        help=(
+            "Hub height [m]. "
+            f"Default Alto Baguales value: {DEFAULT_HUB_HEIGHT_M} m. "
+            "This is metadata/assumption only; no vertical wind correction "
+            "is performed."
+        ),
+    )
+
+    parser.add_argument(
+        "--turbine_model",
+        type=str,
+        default=DEFAULT_TURBINE_MODEL,
+        help=(
+            "Turbine model label. "
+            f"Default: {DEFAULT_TURBINE_MODEL}."
+        ),
+    )
+
+    parser.add_argument(
+        "--cut_out_speed_ms",
+        type=float,
+        default=None,
+        help=(
+            "Optional cut-out wind speed [m/s]. "
+            "If omitted, use the last wind-speed point of the curve."
+        ),
+    )
+
+    parser.add_argument(
+        "--n_turbines",
+        type=float,
+        default=DEFAULT_N_TURBINES,
+        help=(
+            "Number or equivalent number of turbines. Default: 1."
+        ),
+    )
+
+    parser.add_argument(
+        "--availability",
+        type=float,
+        default=1.0,
+        help=(
+            "Plant availability factor in [0, 1]. Default: 1."
+        ),
+    )
+
+    parser.add_argument(
+        "--electrical_efficiency",
+        type=float,
+        default=1.0,
+        help=(
+            "Aggregate electrical efficiency in [0, 1]. Default: 1."
+        ),
     )
 
     parser.add_argument(
@@ -532,6 +619,22 @@ def main() -> None:
         forecast_dates=forecast_dates,
     )
 
+    power_output_path = save_power_scenarios(
+        wind_scenarios=result.scenarios,
+        forecast_dates=forecast_dates,
+        output_dir=run_output_dir,
+        curve_path=args.power_curve,
+        rated_power_mw=args.rated_power_mw,
+        cut_out_speed_ms=args.cut_out_speed_ms,
+        turbine_model=args.turbine_model,
+        hub_height_m=args.hub_height_m,
+        rescale_to_rated_power=True,
+        n_turbines=args.n_turbines,
+        availability=args.availability,
+        electrical_efficiency=args.electrical_efficiency,
+        output_unit="MW",
+    )
+
     print("\n=== SCHAAKE SHUFFLE ===")
     print(
         f"Scenarios shape: "
@@ -546,6 +649,34 @@ def main() -> None:
         f"-> "
         f"{result.marginal_probability_grid[-1]:.4f}"
     )
+    print("\n=== ALTO BAGUALES POWER CONVERSION ===")
+    print(f"Power curve:   {args.power_curve}")
+    print(f"Turbine model: {args.turbine_model}")
+    print(f"Hub height:    {args.hub_height_m:.1f} m")
+    print(f"Rated power:   {args.rated_power_mw:.3f} MW/turbine")
+    print("Curve source:  supplied CSV, max 3.5 MW")
+    print(
+        "Curve scaling: "
+        f"{args.rated_power_mw / 3.5:.6f} "
+        "(requested/source nominal)"
+    )
+    print(f"Turbines:      {args.n_turbines}")
+    print(f"Availability:  {args.availability}")
+    print(
+        f"Electrical eff.: {args.electrical_efficiency}"
+    )
+    print("Output unit:   MW")
+    print(
+        f"Power shape:   {result.scenarios.shape}"
+    )
+    print(
+        f"Saved power:   {power_output_path.name}"
+    )
+    print(
+        "Interpretation: power-curve transformation of "
+        "daily wind scenarios."
+    )
+
     print(
         f"\nSaved to: {run_output_dir}"
     )
