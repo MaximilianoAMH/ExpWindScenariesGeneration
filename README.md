@@ -11,27 +11,29 @@ TimesFM entrega pronósticos marginales por día, en este proyecto Q10, Q20, ...
 El flujo principal es:
 
 ```text
-Contexto observado (32 días)
+Contexto observado (C días)
           |
           v
 TimesFM 2.5 zero-shot
-Q10,...,Q90 para 28 días
+Q10,...,Q90 para H días
           |
-          +-----------------------+
-                                  |
-Histórico 1980-2013               |
-trayectorias completas de 28 días |
-          |                       |
-          v                       |
-ranks históricos por día          |
-          |                       |
-          +-----------+-----------+
+          +----------------------+
+                                 |
+Histórico 1980-2013              |
+trayectorias completas de H días |
+          |                      |
+          v                      |
+ranks históricos por día         |
+          |                      |
+          +-----------+----------+
                       v
                Schaake Shuffle
                       |
                       v
-                L escenarios x 28
+                L escenarios x H
 ```
+
+donde `C = context_len` y `H = horizon_len`. Los valores por defecto son `C = 32` y `H = 28`, pero ambos son configurables desde la línea de comandos o desde el notebook de inicio rápido.
 
 El target observado del período pronosticado **no participa en la generación**. Se utiliza solamente después, para evaluación ex-post y visualización.
 
@@ -60,6 +62,7 @@ ExperimentosTimesFM/
 │       ├── forecasting.py
 │       ├── historical.py
 │       ├── schaake.py
+│       ├── evaluation.py
 │       └── cli/
 │           ├── generate.py
 │           └── visualize.py
@@ -71,6 +74,9 @@ ExperimentosTimesFM/
 │       ├── check_timesfm_channels.py
 │       ├── inspect_data.py
 │       └── plot_data_overview.py
+│
+├── notebooks/
+│   └── TimesFM_Schaake_Quickstart.ipynb
 │
 ├── experiments/
 │   └── finetuning/
@@ -87,8 +93,10 @@ ExperimentosTimesFM/
 - `forecasting.py`: extracción de todos los cuantiles disponibles de TimesFM en una matriz `H x K`.
 - `historical.py`: construcción y selección flexible de trayectorias históricas para Schaake Shuffle.
 - `schaake.py`: cálculo de ranks, discretización de marginales y construcción final de escenarios.
-- `cli/generate.py`: pipeline completo de generación zero-shot.
+- `evaluation.py`: carga y exportación del ground truth correspondiente exactamente al horizonte pronosticado; se utiliza sólo para evaluación ex-post.
+- `cli/generate.py`: pipeline completo de generación zero-shot, con `context_len` y `horizon_len` configurables y selección automática de CPU/GPU.
 - `cli/visualize.py`: visualización de fan plots o escenarios individuales; siempre muestra el contexto utilizado por TimesFM.
+- `notebooks/TimesFM_Schaake_Quickstart.ipynb`: interfaz de inicio rápido para ejecutar el mismo pipeline desde Jupyter y exportar `ground_truth.csv` después de la generación.
 
 Los scripts de fine-tuning se mantienen en `experiments/finetuning/` para no mezclar el pipeline estable actual con experimentos futuros.
 
@@ -200,6 +208,22 @@ uv sync
 
 `uv` actualizará el entorno y el archivo `uv.lock` correspondiente.
 
+### Uso con Jupyter
+
+El repositorio incluye un notebook de inicio rápido:
+
+```text
+notebooks/TimesFM_Schaake_Quickstart.ipynb
+```
+
+Puede abrirse sin agregar Jupyter como dependencia permanente del proyecto:
+
+```powershell
+uv run --with jupyter jupyter lab
+```
+
+El notebook utiliza el mismo módulo `wind_scenarios.cli.generate` que la CLI. No contiene una segunda implementación del algoritmo.
+
 ## Generación de escenarios
 
 ### Caso A: una trayectoria histórica por año
@@ -216,7 +240,27 @@ También puede ejecutarse directamente como módulo:
 uv run python -m wind_scenarios.cli.generate --origin 2014-04-01 --historical_method same_calendar_date
 ```
 
-El contexto suministrado a TimesFM es siempre el bloque de 32 días inmediatamente anterior al origen. Para `2014-04-01` es `2014-02-28` a `2014-03-31`.
+Por defecto, el contexto suministrado a TimesFM es el bloque de 32 días inmediatamente anterior al origen y el horizonte es de 28 días. Para `2014-04-01`, el contexto por defecto es `2014-02-28` a `2014-03-31` y el forecast cubre `2014-04-01` a `2014-04-28`.
+
+Los dos largos son configurables:
+
+```powershell
+uv run generate-wind-scenarios `
+    --origin 2014-04-01 `
+    --historical_method same_calendar_date `
+    --context_len 60 `
+    --horizon_len 60
+```
+
+Con ese ejemplo, TimesFM recibe 60 días de contexto y genera 60 días futuros. Las trayectorias históricas utilizadas por Schaake Shuffle también pasan a tener longitud `H = 60`.
+
+El argumento `--device` acepta `auto`, `cpu` o `cuda`. El valor recomendado es el predeterminado:
+
+```text
+--device auto
+```
+
+que usa CUDA si está disponible y, en caso contrario, CPU.
 
 ### Caso B: más de una trayectoria por año mediante ventanas móviles
 
@@ -229,7 +273,7 @@ Cuando se usa `same_calendar_date`, para un origen como `2014-04-01` existe como
 2013-04-01 -> 2013-04-28
 ```
 
-Con 1980-2013 esto produce, idealmente, `L = 34` trayectorias. Si se desean más escenarios, el método `moving_window` aumenta la biblioteca histórica permitiendo que la ventana de 28 días comience algunos días antes o después de la fecha estacional de referencia.
+Con 1980-2013 esto produce, idealmente, `L = 34` trayectorias. Si se desean más escenarios, el método `moving_window` aumenta la biblioteca histórica permitiendo que la ventana de longitud `H` comience algunos días antes o después de la fecha estacional de referencia.
 
 #### Cómo se construyen las ventanas móviles
 
@@ -266,7 +310,7 @@ para cada año se generan candidatos aproximadamente desde:
 16 de abril -> 13 de mayo
 ```
 
-Cada fila sigue siendo una **trayectoria histórica completa de 28 días consecutivos**. No se seleccionan días independientes ni se mezclan años dentro de una misma trayectoria.
+Cada fila sigue siendo una **trayectoria histórica completa de `H` días consecutivos**. No se seleccionan días independientes ni se mezclan años dentro de una misma trayectoria.
 
 En términos de fechas:
 
@@ -293,7 +337,7 @@ Esto **no significa que se usarán 1054 escenarios**. Primero se construye la bi
 
 Una ventana candidata se descarta si:
 
-1. no contiene exactamente `H = 28` observaciones;
+1. no contiene exactamente `H` observaciones;
 2. cruza un gap de calendario;
 3. alguno de sus días no está disponible en el dataset;
 4. la trayectoria completa queda fuera del período histórico permitido.
@@ -404,6 +448,113 @@ Este método no debe confundirse con **Analog Schaake Shuffle**. En `moving_wind
 
 La selección histórica es independiente del núcleo de Schaake Shuffle: cambiar `L`, `window_radius_days` o el método histórico modifica la biblioteca de ranks, pero no la implementación matemática del shuffle.
 
+## Evaluación ex-post y ground truth
+
+La generación de escenarios y la lectura del futuro observado se mantienen separadas.
+
+El módulo:
+
+```text
+src/wind_scenarios/evaluation.py
+```
+
+contiene:
+
+```python
+load_ground_truth(...)
+save_ground_truth(...)
+```
+
+Estas funciones obtienen exactamente las observaciones asociadas a:
+
+```text
+origin, origin + 1 día, ..., origin + horizon_len - 1 días
+```
+
+y verifican que todo el horizonte exista y sea diario-continuo.
+
+El CSV exportado tiene la forma:
+
+```text
+DATE,WIND,LEAD_DAY
+2014-04-01,...,1
+2014-04-02,...,2
+...
+```
+
+`LEAD_DAY` comienza en 1 y permite alinear directamente cada observación con la posición correspondiente del forecast.
+
+Es importante que `evaluation.py` **no forma parte del cálculo de TimesFM ni de Schaake Shuffle**. Su función es exclusivamente ex-post.
+
+### Notebook de inicio rápido
+
+Para una persona que utiliza el repositorio por primera vez, la forma más sencilla de ejecutar un experimento es:
+
+```text
+notebooks/TimesFM_Schaake_Quickstart.ipynb
+```
+
+La función central del notebook se utiliza así:
+
+```python
+result = generate_wind_scenarios(
+    origin="2014-04-01",
+    historical_method="same_calendar_date",
+    context_len=32,
+    horizon_len=28,
+)
+```
+
+El notebook ejecuta primero el pipeline de generación mediante `wind_scenarios.cli.generate`. Sólo si esa etapa termina correctamente llama a `save_ground_truth(...)`.
+
+El orden es:
+
+```text
+contexto observado
+        |
+        v
+TimesFM
+        |
+        v
+Schaake Shuffle
+        |
+        v
+CSV de generación
+        |
+        v
+evaluation.py
+        |
+        v
+ground_truth.csv
+```
+
+Por tanto, `ground_truth.csv` no introduce leakage.
+
+Ejemplo con 60 días de contexto y 60 días de forecast:
+
+```python
+result_60 = generate_wind_scenarios(
+    origin="2014-04-01",
+    historical_method="same_calendar_date",
+    context_len=60,
+    horizon_len=60,
+)
+```
+
+Ejemplo con 100 escenarios y ventanas móviles:
+
+```python
+result_100 = generate_wind_scenarios(
+    origin="2014-04-01",
+    historical_method="moving_window",
+    context_len=32,
+    horizon_len=28,
+    n_scenarios=100,
+    window_radius_days=15,
+    min_start_distance_days=7,
+)
+```
+
 ## Salidas
 
 Cada origen crea una carpeta bajo:
@@ -424,10 +575,13 @@ outputs/schaake/2014-04-01/
 ├── empirical_pseudo_observations.csv
 ├── assigned_probabilities.csv
 ├── timesfm_discretized_marginals.csv
-└── scenarios.csv
+├── scenarios.csv
+└── ground_truth.csv        # si se exporta desde evaluation.py / notebook
 ```
 
 `context.csv` guarda exactamente las observaciones entregadas a TimesFM, lo que permite auditar que no hubo leakage del target.
+
+`ground_truth.csv` no es necesario para generar escenarios. Se agrega posteriormente cuando se utiliza `evaluation.py` o el notebook de inicio rápido.
 
 ## Visualización
 
@@ -499,18 +653,43 @@ La versión principal usa `google/timesfm-2.5-200m-transformers` sin ajuste sobr
 
 Esto significa que el modelo no se fine-tunea con el período 1980-2013 dentro de este proyecto. No implica por sí solo demostrar que la serie no pudiera haber formado parte del pretraining original de TimesFM.
 
-### 2. Horizonte y contexto
+### 2. Horizonte y contexto configurables
 
-Configuración actual:
+Los valores por defecto siguen siendo:
 
 ```text
-contexto = 32 días
-horizonte = 28 días
+context_len = 32 días
+horizon_len = 28 días
 ```
+
+pero ya no están fijados en el código. Se controlan mediante:
+
+```text
+--context_len
+--horizon_len
+```
+
+Por ejemplo:
+
+```powershell
+uv run generate-wind-scenarios `
+    --origin 2014-04-01 `
+    --historical_method same_calendar_date `
+    --context_len 60 `
+    --horizon_len 60
+```
+
+El horizonte `H` se propaga a TimesFM, a las trayectorias históricas y a la matriz final de escenarios. En consecuencia:
+
+```text
+L escenarios x H días
+```
+
+puede ser, por ejemplo, `34 x 28`, `34 x 60` o `100 x 60`, según la configuración seleccionada.
 
 ### 3. Dependencia temporal
 
-Para cada día `t`, los valores de las `L` trayectorias históricas se ordenan y se calcula el rank de cada trayectoria. Aunque el rank se calcula por columna, cada fila conserva su vector completo de ranks a través de los 28 días. Esa secuencia conjunta es la plantilla ordinal que se transfiere al escenario correspondiente.
+Para cada día `t`, los valores de las `L` trayectorias históricas se ordenan y se calcula el rank de cada trayectoria. Aunque el rank se calcula por columna, cada fila conserva su vector completo de ranks a través de los `H` días. Esa secuencia conjunta es la plantilla ordinal que se transfiere al escenario correspondiente.
 
 La trayectoria histórica aporta **dependencia/ranks**, mientras que TimesFM aporta **magnitudes marginales futuras**.
 
@@ -552,7 +731,8 @@ uv run pytest
 
 ## Próximos pasos
 
-- validación cuantitativa de los escenarios generados;
+- validación cuantitativa de los escenarios generados utilizando `ground_truth.csv`;
+- evaluación comparativa para distintos `context_len` y `horizon_len`;
 - comparación `same_calendar_date` vs `moving_window`;
 - Analog Schaake Shuffle;
 - evaluación de autocorrelación, ramps, persistencia y eventos conjuntos;
