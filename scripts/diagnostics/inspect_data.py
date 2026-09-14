@@ -1,4 +1,4 @@
-"""Print a compact diagnostic summary of the processed daily POWER dataset."""
+"""Print a compact diagnostic summary of the daily generated-energy dataset."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ from wind_scenarios.data import (
     DEFAULT_DATA_PATH,
     DEFAULT_TARGET_COLUMN,
     find_daily_gaps,
-    load_power_dataframe,
+    load_daily_generation_dataframe,
 )
 
 
 def main() -> None:
-    df = load_power_dataframe(DEFAULT_DATA_PATH)
+    df = load_daily_generation_dataframe(DEFAULT_DATA_PATH)
     gaps = find_daily_gaps(df)
 
     print("Shape:", df.shape)

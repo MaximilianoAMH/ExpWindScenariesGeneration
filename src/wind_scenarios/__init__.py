@@ -1,1 +1,1 @@
-"""Power scenario generation with zero-shot TimesFM and Schaake Shuffle."""
+"""Command-line interfaces for scenario generation and visualization."""

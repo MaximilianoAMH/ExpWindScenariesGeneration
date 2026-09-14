@@ -36,9 +36,9 @@ DEFAULT_HORIZON_LEN = 28
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate daily POWER scenarios using zero-shot TimesFM 2.5 "
-            "marginals and Schaake Shuffle dependence. The input dataset is "
-            "already in the power domain."
+            "Generate daily wind-energy scenarios using zero-shot TimesFM 2.5 "
+            "marginals and Schaake Shuffle dependence. The target is total "
+            "generated energy per complete day, in MWh."
         )
     )
 
@@ -82,27 +82,27 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--power_bounds_policy",
+        "--energy_bounds_policy",
         choices=["clip", "error", "none"],
         default="clip",
         help=(
-            "Physical bounds applied to TimesFM power quantiles before the "
+            "Physical bounds applied to TimesFM daily-energy quantiles before "
             "Schaake Shuffle. 'clip' is recommended."
         ),
     )
     parser.add_argument(
-        "--power_min_mw",
+        "--energy_min_mwh",
         type=float,
         default=0.0,
-        help="Physical lower bound for power forecasts.",
+        help="Physical lower bound for daily generated energy.",
     )
     parser.add_argument(
-        "--power_max_mw",
+        "--energy_max_mwh",
         type=float,
         default=None,
         help=(
-            "Physical upper bound. If omitted, the program attempts to read "
-            "effective_capacity_mw from <data_path>.metadata.json."
+            "Physical upper bound in MWh/day. If omitted, the program attempts "
+            "to read max_daily_energy_mwh from <data_path>.metadata.json."
         ),
     )
 
@@ -172,7 +172,12 @@ def save_context(
     *,
     value_column: str,
 ) -> None:
-    frame = pd.DataFrame({"DATE": context_dates, value_column: context})
+    frame = pd.DataFrame(
+        {
+            "DATE": context_dates,
+            value_column: context,
+        }
+    )
     frame.to_csv(
         output_dir / "context.csv",
         index=False,
@@ -189,7 +194,12 @@ def save_timesfm_quantiles(
         f"q{int(round(q * 100)):02d}": forecast.values[:, k]
         for k, q in enumerate(forecast.probabilities)
     }
-    pd.DataFrame({"DATE": forecast_dates, **columns}).to_csv(
+    pd.DataFrame(
+        {
+            "DATE": forecast_dates,
+            **columns,
+        }
+    ).to_csv(
         output_dir / "timesfm_quantiles.csv",
         index=False,
         date_format="%Y-%m-%d",
@@ -197,7 +207,7 @@ def save_timesfm_quantiles(
 
 
 def save_historical_values(historical, output_dir: Path) -> None:
-    L, H = historical.values.shape
+    _, H = historical.values.shape
     frame = pd.DataFrame(
         historical.values,
         columns=[f"day_{t + 1:02d}" for t in range(H)],
@@ -207,35 +217,53 @@ def save_historical_values(historical, output_dir: Path) -> None:
         "trajectory_id",
         historical.metadata["trajectory_id"].to_numpy(),
     )
-    frame.to_csv(output_dir / "historical_trajectories.csv", index=False)
+    frame.to_csv(
+        output_dir / "historical_trajectories.csv",
+        index=False,
+    )
 
 
 def preprocessing_metadata_path(data_path: Path) -> Path:
     return data_path.with_suffix(".metadata.json")
 
 
-def load_preprocessing_metadata(data_path: Path) -> dict[str, object] | None:
+def load_preprocessing_metadata(
+    data_path: Path,
+) -> dict[str, object] | None:
     path = preprocessing_metadata_path(data_path)
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(
+        path.read_text(encoding="utf-8")
+    )
 
 
-def resolve_power_max_mw(
+def resolve_energy_max_mwh(
     requested_max: float | None,
     data_path: Path,
 ) -> tuple[float | None, str]:
     if requested_max is not None:
         if requested_max <= 0:
-            raise ValueError("--power_max_mw must be positive.")
+            raise ValueError(
+                "--energy_max_mwh must be positive."
+            )
         return float(requested_max), "CLI"
 
-    metadata = load_preprocessing_metadata(data_path)
-    if metadata is not None and metadata.get("effective_capacity_mw") is not None:
-        value = float(metadata["effective_capacity_mw"])
+    metadata = load_preprocessing_metadata(
+        data_path
+    )
+    if (
+        metadata is not None
+        and metadata.get("max_daily_energy_mwh")
+        is not None
+    ):
+        value = float(
+            metadata["max_daily_energy_mwh"]
+        )
         if value <= 0:
             raise ValueError(
-                "effective_capacity_mw in preprocessing metadata must be positive."
+                "max_daily_energy_mwh in preprocessing metadata "
+                "must be positive."
             )
         return value, "preprocessing metadata"
 
@@ -247,13 +275,14 @@ def save_run_config(
     *,
     args: argparse.Namespace,
     device: torch.device,
-    power_max_mw: float | None,
-    power_max_source: str,
+    energy_max_mwh: float | None,
+    energy_max_source: str,
 ) -> None:
     config = {
         "model_id": MODEL_ID,
         "data_path": str(args.data_path),
         "target_column": args.target_column,
+        "target_unit": "MWh/day",
         "origin": str(pd.Timestamp(args.origin).date()),
         "context_len": args.context_len,
         "horizon_len": args.horizon_len,
@@ -269,13 +298,20 @@ def save_run_config(
         "tie_break": args.tie_break,
         "seed": args.seed,
         "device": str(device),
-        "power_bounds_policy": args.power_bounds_policy,
-        "power_min_mw": args.power_min_mw,
-        "power_max_mw": power_max_mw,
-        "power_max_source": power_max_source,
+        "energy_bounds_policy": args.energy_bounds_policy,
+        "energy_min_mwh": args.energy_min_mwh,
+        "energy_max_mwh": energy_max_mwh,
+        "energy_max_source": energy_max_source,
     }
-    (output_dir / "run_config.json").write_text(
-        json.dumps(config, indent=2),
+
+    (
+        output_dir
+        / "run_config.json"
+    ).write_text(
+        json.dumps(
+            config,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
@@ -284,20 +320,35 @@ def main() -> None:
     args = parse_args()
 
     if args.context_len <= 0:
-        raise ValueError("--context_len must be positive.")
+        raise ValueError(
+            "--context_len must be positive."
+        )
     if args.horizon_len <= 0:
-        raise ValueError("--horizon_len must be positive.")
-    if args.power_min_mw < 0:
-        raise ValueError("--power_min_mw must be >= 0.")
+        raise ValueError(
+            "--horizon_len must be positive."
+        )
+    if args.energy_min_mwh < 0:
+        raise ValueError(
+            "--energy_min_mwh must be >= 0."
+        )
 
-    device = resolve_device(args.device)
-    model_dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
-    origin = pd.Timestamp(args.origin).normalize()
+    device = resolve_device(
+        args.device
+    )
+    model_dtype = (
+        torch.bfloat16
+        if device.type == "cuda"
+        else torch.float32
+    )
+    origin = pd.Timestamp(
+        args.origin
+    ).normalize()
 
     df = load_timeseries_dataframe(
         args.data_path,
         value_column=args.target_column,
     )
+
     context, context_dates = extract_context(
         df,
         origin,
@@ -305,40 +356,84 @@ def main() -> None:
         value_column=args.target_column,
     )
 
-    power_max_mw, power_max_source = resolve_power_max_mw(
-        args.power_max_mw,
-        args.data_path,
+    energy_max_mwh, energy_max_source = (
+        resolve_energy_max_mwh(
+            args.energy_max_mwh,
+            args.data_path,
+        )
     )
 
     print("\n=== FORECAST ORIGIN ===")
     print(f"Origin:          {origin.date()}")
     print(f"Target variable: {args.target_column}")
-    print(f"Context:         {context_dates[0].date()} -> {context_dates[-1].date()}")
-    print(f"Context length:  {args.context_len} days")
-    print(f"Horizon length:  {args.horizon_len} days")
-    print("Future target used in generation: NO")
+    print("Target unit:     MWh/day")
+    print(
+        f"Context:         "
+        f"{context_dates[0].date()} -> "
+        f"{context_dates[-1].date()}"
+    )
+    print(
+        f"Context length:  "
+        f"{args.context_len} days"
+    )
+    print(
+        f"Horizon length:  "
+        f"{args.horizon_len} days"
+    )
+    print(
+        "Future target used in generation: NO"
+    )
 
-    print(f"\nLoading zero-shot model: {MODEL_ID}")
-    print(f"Execution device: {device} (dtype={model_dtype})")
+    print(
+        f"\nLoading zero-shot model: "
+        f"{MODEL_ID}"
+    )
+    print(
+        f"Execution device: "
+        f"{device} (dtype={model_dtype})"
+    )
 
     model = (
         TimesFm2_5ModelForPrediction
-        .from_pretrained(MODEL_ID, dtype=model_dtype)
+        .from_pretrained(
+            MODEL_ID,
+            dtype=model_dtype,
+        )
         .to(device)
     )
     model.eval()
 
-    model_max_context = getattr(model.config, "context_length", None)
-    model_max_horizon = getattr(model.config, "horizon_length", None)
-    if model_max_context is not None and args.context_len > int(model_max_context):
+    model_max_context = getattr(
+        model.config,
+        "context_length",
+        None,
+    )
+    model_max_horizon = getattr(
+        model.config,
+        "horizon_length",
+        None,
+    )
+
+    if (
+        model_max_context is not None
+        and args.context_len
+        > int(model_max_context)
+    ):
         raise ValueError(
-            f"Requested context_len={args.context_len}, but TimesFM supports "
-            f"at most {model_max_context}."
+            f"Requested context_len={args.context_len}, "
+            "but TimesFM supports at most "
+            f"{model_max_context}."
         )
-    if model_max_horizon is not None and args.horizon_len > int(model_max_horizon):
+
+    if (
+        model_max_horizon is not None
+        and args.horizon_len
+        > int(model_max_horizon)
+    ):
         raise ValueError(
-            f"Requested horizon_len={args.horizon_len}, but this checkpoint "
-            f"produces at most {model_max_horizon} steps."
+            f"Requested horizon_len={args.horizon_len}, "
+            "but this checkpoint produces at most "
+            f"{model_max_horizon} steps."
         )
 
     raw_forecast = forecast_quantiles(
@@ -348,23 +443,51 @@ def main() -> None:
         model_context_len=args.context_len,
         device=device,
     )
-    raw_crossing_rate = quantile_crossing_rate(raw_forecast)
+    raw_crossing_rate = (
+        quantile_crossing_rate(
+            raw_forecast
+        )
+    )
 
     forecast = apply_value_bounds(
         raw_forecast,
-        lower=args.power_min_mw,
-        upper=power_max_mw,
-        policy=args.power_bounds_policy,
+        lower=args.energy_min_mwh,
+        upper=energy_max_mwh,
+        policy=args.energy_bounds_policy,
     )
 
-    print("\n=== TIMESFM ZERO-SHOT POWER MARGINALS ===")
-    print(f"Quantiles:       {forecast.probabilities}")
-    print(f"Shape:           {forecast.values.shape}")
-    print(f"Crossing rate:   {raw_crossing_rate:.6f}")
-    print(f"Bounds policy:   {args.power_bounds_policy}")
-    print(f"Lower bound:     {args.power_min_mw:.6f} MW")
-    print(f"Upper bound:     {power_max_mw if power_max_mw is not None else 'None'}")
-    print(f"Upper source:    {power_max_source}")
+    print(
+        "\n=== TIMESFM ZERO-SHOT "
+        "DAILY-ENERGY MARGINALS ==="
+    )
+    print(
+        f"Quantiles:       "
+        f"{forecast.probabilities}"
+    )
+    print(
+        f"Shape:           "
+        f"{forecast.values.shape}"
+    )
+    print(
+        f"Crossing rate:   "
+        f"{raw_crossing_rate:.6f}"
+    )
+    print(
+        f"Bounds policy:   "
+        f"{args.energy_bounds_policy}"
+    )
+    print(
+        f"Lower bound:     "
+        f"{args.energy_min_mwh:.6f} MWh/day"
+    )
+    print(
+        f"Upper bound:     "
+        f"{energy_max_mwh if energy_max_mwh is not None else 'None'}"
+    )
+    print(
+        f"Upper source:    "
+        f"{energy_max_source}"
+    )
 
     historical = select_historical_trajectories(
         df=df,
@@ -382,10 +505,21 @@ def main() -> None:
         value_column=args.target_column,
     )
 
-    print("\n=== HISTORICAL POWER LIBRARY ===")
-    print(f"Method:          {args.historical_method}")
-    print(f"Trajectories:    {historical.n_trajectories}")
-    print(f"Horizon:         {historical.horizon}")
+    print(
+        "\n=== HISTORICAL DAILY-GENERATION LIBRARY ==="
+    )
+    print(
+        f"Method:          "
+        f"{args.historical_method}"
+    )
+    print(
+        f"Trajectories:    "
+        f"{historical.n_trajectories}"
+    )
+    print(
+        f"Horizon:         "
+        f"{historical.horizon}"
+    )
 
     result = schaake_shuffle(
         forecast=forecast,
@@ -395,11 +529,23 @@ def main() -> None:
         seed=args.seed,
         crossing_policy=args.crossing_policy,
     )
-    validate_shuffle_result(result)
+    validate_shuffle_result(
+        result
+    )
 
-    forecast_dates = pd.date_range(origin, periods=args.horizon_len, freq="D")
-    run_output_dir = args.output_dir / origin.date().isoformat()
-    run_output_dir.mkdir(parents=True, exist_ok=True)
+    forecast_dates = pd.date_range(
+        origin,
+        periods=args.horizon_len,
+        freq="D",
+    )
+    run_output_dir = (
+        args.output_dir
+        / origin.date().isoformat()
+    )
+    run_output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     save_context(
         context,
@@ -407,32 +553,54 @@ def main() -> None:
         run_output_dir,
         value_column=args.target_column,
     )
-    save_timesfm_quantiles(forecast, forecast_dates, run_output_dir)
-    save_historical_values(historical, run_output_dir)
+    save_timesfm_quantiles(
+        forecast,
+        forecast_dates,
+        run_output_dir,
+    )
+    save_historical_values(
+        historical,
+        run_output_dir,
+    )
     save_schaake_result(
         result,
         run_output_dir,
         forecast_dates=forecast_dates,
-        scenarios_filename="power_scenarios.csv",
+        scenarios_filename="energy_scenarios.csv",
     )
     save_run_config(
         run_output_dir,
         args=args,
         device=device,
-        power_max_mw=power_max_mw,
-        power_max_source=power_max_source,
+        energy_max_mwh=energy_max_mwh,
+        energy_max_source=energy_max_source,
     )
 
-    print("\n=== SCHAAKE SHUFFLE: POWER SCENARIOS ===")
-    print(f"Scenarios shape: {result.scenarios.shape}")
-    print("Marginal permutation checks: PASSED")
+    print(
+        "\n=== SCHAAKE SHUFFLE: "
+        "DAILY GENERATION SCENARIOS ==="
+    )
+    print(
+        f"Scenarios shape: "
+        f"{result.scenarios.shape}"
+    )
+    print(
+        "Marginal permutation checks: PASSED"
+    )
     print(
         "Probability grid: "
-        f"{result.marginal_probability_grid[0]:.4f} -> "
+        f"{result.marginal_probability_grid[0]:.4f} "
+        "-> "
         f"{result.marginal_probability_grid[-1]:.4f}"
     )
-    print(f"Saved to:        {run_output_dir}")
-    print("Scenario file:   power_scenarios.csv")
+    print(
+        f"Saved to:        "
+        f"{run_output_dir}"
+    )
+    print(
+        "Scenario file:   "
+        "energy_scenarios.csv"
+    )
 
 
 if __name__ == "__main__":

@@ -75,7 +75,7 @@ def build_historical_candidates(
     *,
     value_column: str = DEFAULT_TARGET_COLUMN,
 ) -> tuple[np.ndarray, pd.DataFrame]:
-    """Build all valid historical power trajectories before selecting L."""
+    """Build all valid historical daily-generation trajectories before selecting L."""
     forecast_origin = pd.Timestamp(forecast_origin).normalize()
 
     if horizon_len <= 0:
@@ -204,7 +204,7 @@ def select_historical_trajectories(
     *,
     value_column: str = DEFAULT_TARGET_COLUMN,
 ) -> HistoricalTrajectorySet:
-    """Select L complete historical POWER_MW trajectories for Schaake Shuffle."""
+    """Select L complete historical ENERGY_MWH trajectories for Schaake Shuffle."""
     if n_trajectories is not None and n_trajectories <= 0:
         raise ValueError("n_trajectories must be positive or None.")
     if min_start_distance_days < 0:

@@ -31,7 +31,7 @@ def load_ground_truth(
     *,
     value_column: str = DEFAULT_TARGET_COLUMN,
 ) -> pd.DataFrame:
-    """Load the ex-post observed power values for one forecast horizon."""
+    """Load the ex-post observed daily generated energy for one forecast horizon."""
     dates = forecast_dates(origin=origin, horizon_len=horizon_len)
     df = load_timeseries_dataframe(data_path, value_column=value_column)
 

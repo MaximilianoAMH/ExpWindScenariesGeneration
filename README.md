@@ -1,83 +1,45 @@
-# TimesFM + Schaake Shuffle — escenarios de potencia eólica
+# TimesFM + Schaake Shuffle — escenarios de generación eólica diaria
 
-Repositorio para generar escenarios probabilísticos de **potencia media diaria** con **TimesFM 2.5** y **Schaake Shuffle**.
+Repositorio para generar escenarios probabilísticos de **energía total generada por día** usando **TimesFM 2.5** y **Schaake Shuffle**.
 
-La velocidad del viento se transforma a potencia antes del modelo probabilístico:
+> En términos físicos, la generación acumulada durante un día es **energía**, no potencia. Por eso el target del modelo es `ENERGY_MWH`.
 
 ```text
-viento horario [m/s]
-        ↓
+velocidad del viento horaria [m/s]
+              ↓
 curva de potencia Alto Baguales
-        ↓
+              ↓
 potencia horaria [MW]
-        ↓
-agregación de días completos
-        ↓
-potencia media diaria [MW]
-        ↓
-TimesFM 2.5 zero-shot
-        ↓
-Q10, Q20, ..., Q90 de potencia
-        ↓
+              ↓
+integración de 24 intervalos de 1 h
+              ↓
+ENERGY_MWH diaria
+              ↓
+TimesFM
+              ↓
 Schaake Shuffle
-        ↓
-escenarios de potencia [MW]
+              ↓
+escenarios de generación diaria [MWh]
 ```
 
-El target de TimesFM es `POWER_MW`. El futuro observado no participa en la generación; se utiliza posteriormente como ground truth para evaluación.
+Para un día completo:
 
-## 1. Estructura principal
+\[
+E_d=\sum_{h=1}^{24}P_{d,h}\Delta t,
+\qquad \Delta t=1\,h.
+\]
 
-```text
-ExpWindScenariesGeneration/
-├── README.md
-├── pyproject.toml
-├── uv.lock
-│
-├── data/
-│   ├── wind_hourly.csv
-│   ├── power_ab_hourly.csv
-│   ├── power_ab_daily.csv
-│   ├── power_ab_daily.metadata.json
-│   └── power_curves/
-│       └── alto_baguales_3p5mw.csv
-│
-├── outputs/
-│
-├── notebooks/
-│   └── TimesFM_Schaake_Quickstart.ipynb
-│
-├── docs/
-│   ├── Metodologia_Schaake_Shuffle.pdf
-│   └── Metodologia_Schaake_Shuffle.tex
-│
-├── scripts/
-│   ├── preprocess_power_ab.py
-│   └── diagnostics/
-│       ├── check_timesfm_installation.py
-│       ├── check_timesfm_channels.py
-│       ├── inspect_data.py
-│       ├── plot_data_overview.py
-│       └── plot_wind_power_conversion.py
-│
-├── src/
-│   └── wind_scenarios/
-│       ├── data.py
-│       ├── forecasting.py
-│       ├── historical.py
-│       ├── schaake.py
-│       ├── evaluation.py
-│       ├── power.py
-│       └── cli/
-│           ├── generate.py
-│           └── visualize.py
-│
-└── tests/
-```
+Por tanto, con datos horarios:
 
-## 2. Instalación
+\[
+E_d[\mathrm{MWh}]
+=
+\sum_{h=1}^{24}
+P_{d,h}[\mathrm{MW}]
+\times 1[\mathrm{h}].
+\]
 
-El proyecto usa **uv**.
+## 1. Instalación
 
 Desde la raíz:
 
@@ -85,35 +47,37 @@ Desde la raíz:
 uv sync
 ```
 
-Ejecuta los comandos con `uv run`.
+Ejecuta los comandos del repositorio mediante `uv run`.
 
-Para desarrollo y tests:
+Para tests:
 
 ```powershell
 uv sync --extra dev
 uv run pytest
 ```
 
-Para los experimentos de fine-tuning:
+## 2. Datos de entrada
 
-```powershell
-uv sync --extra finetuning
-```
-
-## 3. Preparar el dataset de potencia
-
-El punto de partida es:
+El archivo horario esperado es:
 
 ```text
 data/wind_hourly.csv
 ```
 
-Por defecto se esperan:
+con:
 
 ```text
 source_timestamp
 wind_ab
 ```
+
+La curva de potencia está en:
+
+```text
+data/power_curves/alto_baguales_3p5mw.csv
+```
+
+## 3. Construir la serie diaria de generación
 
 Ejecuta:
 
@@ -121,30 +85,19 @@ Ejecuta:
 uv run python scripts\preprocess_power_ab.py
 ```
 
-Para cada velocidad horaria \(v_{d,h}\) se calcula primero:
+El procesamiento sigue este orden:
 
-\[
-P_{d,h}=f(v_{d,h}),
-\]
+```text
+WIND_MS horaria
+      ↓
+POWER_MW horaria
+      ↓
+sólo días completos de 24 h
+      ↓
+ENERGY_MWH diaria
+```
 
-donde \(f\) es la curva de potencia de Alto Baguales.
-
-Sólo se utilizan días completos de 24 observaciones. Luego:
-
-\[
-POWER\_MW_d=
-\frac{1}{24}
-\sum_{h=1}^{24}P_{d,h}
-\]
-
-y:
-
-\[
-ENERGY\_MWH_d=
-\sum_{h=1}^{24}P_{d,h}.
-\]
-
-El script genera:
+Se generan:
 
 ```text
 data/power_ab_hourly.csv
@@ -152,15 +105,15 @@ data/power_ab_daily.csv
 data/power_ab_daily.metadata.json
 ```
 
-`power_ab_hourly.csv` permite auditar la transformación horaria.
-
-`power_ab_daily.csv` es el dataset de TimesFM:
+El dataset diario contiene:
 
 ```text
 DATE,POWER_MW,ENERGY_MWH
 ```
 
-`power_ab_daily.metadata.json` registra la configuración física y la capacidad efectiva.
+`POWER_MW` es la potencia media del día y se conserva como variable auxiliar.
+
+`ENERGY_MWH` es la suma de la energía producida durante las 24 horas y es la variable utilizada por TimesFM.
 
 ### Días incompletos
 
@@ -170,8 +123,6 @@ Por defecto:
 --incomplete_day_policy error
 ```
 
-detiene el preprocesamiento si encuentra un día con un número distinto de 24 observaciones.
-
 Para descartarlos explícitamente:
 
 ```powershell
@@ -179,74 +130,47 @@ uv run python scripts\preprocess_power_ab.py `
     --incomplete_day_policy drop
 ```
 
-Los gaps resultantes no se interpolan.
+Los gaps no se rellenan ni interpolan.
 
-## 4. Curva de potencia
+## 4. Límites físicos
 
-La curva por defecto está en:
-
-```text
-data/power_curves/alto_baguales_3p5mw.csv
-```
-
-Configuración base:
+La curva base alcanza:
 
 ```text
-turbine_model = Enercon E-138 EP3
-rated_power_mw = 3.5
-hub_height_m = 120
-n_turbines = 1
-availability = 1.0
-electrical_efficiency = 1.0
+3.5 MW por turbina
 ```
 
-Entre dos puntos consecutivos \((v_k,P_k)\) y \((v_{k+1},P_{k+1})\):
+Para una turbina funcionando a potencia nominal durante 24 horas, el máximo diario teórico es:
 
 \[
-P(v)=h_{0,k}+h_kv
+E_{\max}=3.5\times24=84\;\mathrm{MWh/día}.
 \]
 
-con:
+Con varias turbinas y factores de disponibilidad/eficiencia:
 
 \[
-h_k=
-\frac{P_{k+1}-P_k}
-     {v_{k+1}-v_k},
-\qquad
-h_{0,k}=P_k-h_kv_k.
-\]
-
-Para velocidades superiores al último punto de la curva:
-
-```text
-v > 28 m/s -> P = 0
-```
-
-A nivel de planta:
-
-\[
-P_{\text{plant}}(v)=
-P_{\text{turbine}}(v)
-N_{\text{turbines}}
+E_{\max,d}
+=
+P_{\mathrm{rated}}
+N_{\mathrm{turbines}}
 A
-\eta_{\text{el}}.
+\eta_{\mathrm{el}}
+\times24.
 \]
 
-## 5. Generar escenarios de potencia
-
-El generador lee:
+El preprocesamiento guarda este valor como:
 
 ```text
-data/power_ab_daily.csv
+max_daily_energy_mwh
 ```
 
-y usa:
+en:
 
 ```text
-POWER_MW
+data/power_ab_daily.metadata.json
 ```
 
-como variable objetivo.
+## 5. Generar escenarios
 
 Caso base:
 
@@ -259,11 +183,24 @@ uv run python -m wind_scenarios.cli.generate `
 Defaults:
 
 ```text
+target_column = ENERGY_MWH
 context_len = 32
 horizon_len = 28
 device = auto
 probability_grid_mode = timesfm_support
-power_bounds_policy = clip
+energy_bounds_policy = clip
+energy_min_mwh = 0
+```
+
+El límite superior se lee automáticamente desde el metadata del preprocesamiento.
+
+También puede fijarse manualmente:
+
+```powershell
+uv run python -m wind_scenarios.cli.generate `
+    --origin 2014-04-01 `
+    --historical_method same_calendar_date `
+    --energy_max_mwh 84
 ```
 
 Para cambiar contexto y horizonte:
@@ -276,48 +213,13 @@ uv run python -m wind_scenarios.cli.generate `
     --horizon_len 60
 ```
 
-### Límites físicos
-
-Por defecto:
-
-```text
---power_bounds_policy clip
---power_min_mw 0
-```
-
-El límite superior se obtiene de `power_ab_daily.metadata.json` cuando existe.
-
-También puede definirse manualmente:
-
-```powershell
-uv run python -m wind_scenarios.cli.generate `
-    --origin 2014-04-01 `
-    --historical_method same_calendar_date `
-    --power_max_mw 3.5
-```
-
-Políticas disponibles:
-
-```text
-clip
-error
-none
-```
-
-## 6. Biblioteca histórica
+## 6. Selección histórica
 
 ### `same_calendar_date`
 
-Selecciona una trayectoria completa por año histórico con el mismo mes y día que el origen.
+Selecciona una trayectoria completa de `ENERGY_MWH` por año histórico con el mismo mes y día que el origen.
 
-Para:
-
-```text
-origin = 2014-04-01
-horizon_len = 28
-```
-
-se buscan:
+Ejemplo para un origen `2014-04-01` y `H=28`:
 
 ```text
 1980-04-01 -> 1980-04-28
@@ -326,13 +228,9 @@ se buscan:
 2013-04-01 -> 2013-04-28
 ```
 
-Con 1980-2013 se obtienen idealmente 34 trayectorias.
-
 ### `moving_window`
 
-Permite aumentar la biblioteca desplazando el inicio alrededor de la fecha estacional.
-
-Ejemplo:
+Ejemplo con 100 escenarios:
 
 ```powershell
 uv run python -m wind_scenarios.cli.generate `
@@ -343,26 +241,23 @@ uv run python -m wind_scenarios.cli.generate `
     --min_start_distance_days 7
 ```
 
-`window_radius_days` controla el rango de inicios candidatos.
-
-`min_start_distance_days` limita la redundancia entre ventanas seleccionadas dentro del mismo año.
-
-Cada trayectoria debe contener `horizon_len` observaciones diarias consecutivas y válidas.
+Cada trayectoria histórica continúa siendo una secuencia completa y diaria de longitud `H`.
 
 ## 7. Schaake Shuffle
 
-TimesFM entrega marginales futuras de potencia:
+TimesFM genera cuantiles marginales diarios de `ENERGY_MWH`.
+
+Las trayectorias históricas de `ENERGY_MWH` aportan los ranks utilizados para transferir dependencia temporal.
 
 ```text
-Q10, Q20, ..., Q90
-```
+TimesFM
+    -> marginales de energía diaria
 
-Las trayectorias históricas de `POWER_MW` aportan los ranks y la estructura de dependencia temporal.
+Histórico
+    -> dependencia ordinal
 
-```text
-TimesFM   -> marginales de potencia
-Histórico -> dependencia ordinal de potencia
-Schaake   -> escenarios temporales de potencia
+Schaake Shuffle
+    -> escenarios de generación diaria
 ```
 
 El modo recomendado es:
@@ -371,17 +266,15 @@ El modo recomendado es:
 --probability_grid_mode timesfm_support
 ```
 
-que utiliza el soporte `[0.1, 0.9]`.
-
 La política por defecto frente a quantile crossing es:
 
 ```text
 --crossing_policy error
 ```
 
-## 8. Archivos de salida
+## 8. Salidas
 
-Cada origen se guarda en:
+Cada origen genera:
 
 ```text
 outputs/schaake/YYYY-MM-DD/
@@ -399,26 +292,24 @@ outputs/schaake/2014-04-01/
 ├── empirical_pseudo_observations.csv
 ├── assigned_probabilities.csv
 ├── timesfm_discretized_marginals.csv
-├── power_scenarios.csv
+├── energy_scenarios.csv
 ├── run_config.json
 └── ground_truth.csv
 ```
 
-| Archivo | Contenido |
-|---|---|
-| `context.csv` | potencia observada entregada a TimesFM |
-| `timesfm_quantiles.csv` | Q10-Q90 de potencia futura |
-| `historical_trajectories.csv` | trayectorias históricas de potencia |
-| `historical_ranks.csv` | ranks utilizados por Schaake Shuffle |
-| `power_scenarios.csv` | escenarios finales de potencia |
-| `run_config.json` | configuración de la ejecución |
-| `ground_truth.csv` | potencia observada para evaluación ex-post |
+`energy_scenarios.csv` contiene los escenarios finales en MWh/día.
 
-`ground_truth.csv` no participa en la generación.
+`ground_truth.csv` contiene:
+
+```text
+DATE,ENERGY_MWH,LEAD_DAY
+```
+
+y se utiliza sólo para evaluación ex-post.
 
 ## 9. Notebook
 
-El notebook recomendado es:
+El notebook es:
 
 ```text
 notebooks/TimesFM_Schaake_Quickstart.ipynb
@@ -433,7 +324,7 @@ En VS Code selecciona:
 Caso base:
 
 ```python
-result = generate_power_scenarios(
+result = generate_energy_scenarios(
     origin="2014-04-01",
     historical_method="same_calendar_date",
     context_len=32,
@@ -441,25 +332,9 @@ result = generate_power_scenarios(
 )
 ```
 
-100 escenarios:
-
-```python
-result = generate_power_scenarios(
-    origin="2014-04-01",
-    historical_method="moving_window",
-    context_len=32,
-    horizon_len=28,
-    n_scenarios=100,
-    window_radius_days=15,
-    min_start_distance_days=7,
-)
-```
-
-El notebook también permite preprocesar los datos, revisar los CSV, generar gráficos y exportar todas las figuras sin volver a ejecutar TimesFM.
-
 ## 10. Visualización
 
-### Escenario individual con Q10, Q50 y Q90
+Escenario individual con Q10, Q50 y Q90:
 
 ```powershell
 uv run python -m wind_scenarios.cli.visualize `
@@ -468,7 +343,7 @@ uv run python -m wind_scenarios.cli.visualize `
     --scenario_number 1
 ```
 
-### Escenario individual con Q10-Q90
+Con Q10-Q90:
 
 ```powershell
 uv run python -m wind_scenarios.cli.visualize `
@@ -478,7 +353,7 @@ uv run python -m wind_scenarios.cli.visualize `
     --all_quantiles
 ```
 
-### Fan plot
+Fan plot:
 
 ```powershell
 uv run python -m wind_scenarios.cli.visualize `
@@ -487,7 +362,7 @@ uv run python -m wind_scenarios.cli.visualize `
     --all_quantiles
 ```
 
-### Exportar todos con Q10, Q50 y Q90
+Exportar todos con Q10, Q50 y Q90:
 
 ```powershell
 uv run python -m wind_scenarios.cli.visualize `
@@ -499,10 +374,10 @@ uv run python -m wind_scenarios.cli.visualize `
 Se guardan en:
 
 ```text
-power_scenario_plots/
+energy_scenario_plots/
 ```
 
-### Exportar todos con Q10-Q90
+Exportar todos con Q10-Q90:
 
 ```powershell
 uv run python -m wind_scenarios.cli.visualize `
@@ -515,29 +390,40 @@ uv run python -m wind_scenarios.cli.visualize `
 Se guardan en:
 
 ```text
-power_scenario_plots_all_quantiles/
+energy_scenario_plots_all_quantiles/
 ```
 
-## 11. Diagnóstico viento → potencia
+El eje Y de los gráficos es:
 
-Ejecuta:
+```text
+Daily generated energy [MWh]
+```
+
+y el ground truth aparece como:
+
+```text
+Daily Generation Ground Truth
+```
+
+## 11. Diagnósticos
+
+Conversión horaria viento → potencia:
 
 ```powershell
 uv run python scripts\diagnostics\plot_wind_power_conversion.py
 ```
 
-Genera:
+Inspeccionar la serie diaria:
 
-```text
-outputs/diagnostics/hourly_wind_vs_power.png
-outputs/diagnostics/hourly_points_on_power_curve.png
+```powershell
+uv run python scripts\diagnostics\inspect_data.py
 ```
 
-El primero compara viento horario y potencia calculada en el tiempo.
+Graficar primeros y últimos cinco años:
 
-El segundo muestra las observaciones transformadas sobre la curva de potencia.
-
-## 12. Diagnósticos y tests
+```powershell
+uv run python scripts\diagnostics\plot_data_overview.py
+```
 
 Verificar TimesFM:
 
@@ -545,25 +431,13 @@ Verificar TimesFM:
 uv run python scripts\diagnostics\check_timesfm_installation.py
 ```
 
-Inspeccionar canales:
+Revisar canales de TimesFM:
 
 ```powershell
 uv run python scripts\diagnostics\check_timesfm_channels.py
 ```
 
-Inspeccionar el dataset diario de potencia:
-
-```powershell
-uv run python scripts\diagnostics\inspect_data.py
-```
-
-Graficar la serie diaria:
-
-```powershell
-uv run python scripts\diagnostics\plot_data_overview.py
-```
-
-Tests:
+## 12. Tests
 
 ```powershell
 uv run pytest
@@ -574,20 +448,4 @@ uv run pytest
 ```text
 docs/Metodologia_Schaake_Shuffle.pdf
 docs/Metodologia_Schaake_Shuffle.tex
-```
-
-## 14. Fine-tuning
-
-El pipeline principal utiliza:
-
-```text
-google/timesfm-2.5-200m-transformers
-```
-
-en modo zero-shot.
-
-Los experimentos de fine-tuning se mantienen separados en:
-
-```text
-experiments/finetuning/
 ```

@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Convert hourly wind speed to hourly Alto Baguales power and "
-            "then aggregate complete 24-hour days to daily mean power."
+            "then aggregate complete 24-hour days to total daily generated energy."
         )
     )
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT_PATH)
@@ -224,12 +224,14 @@ def convert_hourly_wind_to_power(
 
 def hourly_power_to_daily(hourly: pd.DataFrame) -> pd.DataFrame:
     """
-    Aggregate hourly power to daily mean power and daily energy.
+    Aggregate hourly power to total daily generated energy.
 
-    Because only complete 24-hour days are admitted:
+    Every retained observation represents one hour, so:
+
         ENERGY_MWH = sum_h POWER_MW_h * 1 h
-        POWER_MW   = mean_h POWER_MW_h
-        ENERGY_MWH = 24 * POWER_MW
+
+    POWER_MW is also retained as an auxiliary daily-mean diagnostic, but
+    ENERGY_MWH is the target used by TimesFM and Schaake Shuffle.
     """
     working = hourly.copy()
     working["DATE"] = working["TIMESTAMP"].dt.floor("D")
@@ -305,8 +307,8 @@ def save_metadata(
     metadata = {
         "source_hourly_file": str(input_path),
         "power_curve_file": str(power_curve_path),
-        "target_column": "POWER_MW",
-        "energy_column": "ENERGY_MWH",
+        "target_column": "ENERGY_MWH",
+        "auxiliary_daily_mean_power_column": "POWER_MW",
         "turbine_model": curve.turbine_model,
         "hub_height_m": curve.hub_height_m,
         "rated_power_mw_per_turbine": curve.rated_power_mw,
@@ -315,10 +317,11 @@ def save_metadata(
         "availability": availability,
         "electrical_efficiency": electrical_efficiency,
         "effective_capacity_mw": effective_capacity,
+        "max_daily_energy_mwh": effective_capacity * EXPECTED_HOURS_PER_DAY,
         "hourly_rows": hourly_rows,
         "daily_rows": daily_rows,
-        "daily_aggregation": "mean hourly power over complete 24-hour days",
-        "energy_definition": "sum of 24 hourly POWER_MW values times 1 hour",
+        "daily_aggregation": "sum of hourly power over complete 24-hour days",
+        "target_definition": "ENERGY_MWH = sum of 24 hourly POWER_MW values times 1 hour",
     }
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return metadata_path
@@ -382,6 +385,7 @@ def main() -> None:
     print(f"Daily gaps:          {len(daily_gaps):,}")
     print(f"Rated power/turbine: {curve.rated_power_mw:.3f} MW")
     print(f"Effective capacity:  {capacity_mw:.3f} MW")
+    print(f"Maximum daily energy: {capacity_mw * EXPECTED_HOURS_PER_DAY:.3f} MWh/day")
     print(f"Daily dataset:       {args.daily_output}")
     if not args.no_hourly_output:
         print(f"Hourly audit file:   {args.hourly_output}")

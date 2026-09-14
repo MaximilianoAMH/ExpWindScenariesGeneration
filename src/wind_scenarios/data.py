@@ -11,7 +11,8 @@ from torch.utils.data import Dataset
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "power_ab_daily.csv"
-DEFAULT_TARGET_COLUMN = "POWER_MW"
+DEFAULT_TARGET_COLUMN = "ENERGY_MWH"
+DEFAULT_POWER_COLUMN = "POWER_MW"
 DEFAULT_ENERGY_COLUMN = "ENERGY_MWH"
 
 MONTH_NAMES = {
@@ -63,7 +64,7 @@ def load_timeseries_dataframe(
     """
     Load a daily numerical time series.
 
-    The zero-shot power pipeline uses ``value_column='POWER_MW'``. Missing
+    The zero-shot daily-generation pipeline uses ``value_column='ENERGY_MWH'``. Missing
     calendar days are allowed globally; individual context, target and
     historical windows must still be internally daily-continuous.
     """
@@ -107,7 +108,7 @@ def load_timeseries_dataframe(
         raise ValueError(f"{value_column} contains missing or non-finite values.")
 
     if value_column == DEFAULT_TARGET_COLUMN and np.any(values < 0):
-        raise ValueError("POWER_MW contains negative values.")
+        raise ValueError("ENERGY_MWH contains negative values.")
 
     if df.empty:
         raise ValueError("The daily dataset is empty.")
@@ -127,13 +128,26 @@ def load_timeseries_dataframe(
     return df
 
 
-def load_power_dataframe(
+def load_daily_generation_dataframe(
     data_path: str | Path = DEFAULT_DATA_PATH,
 ) -> pd.DataFrame:
+    """Load the daily total generated-energy series used by TimesFM."""
     return load_timeseries_dataframe(
         data_path,
         value_column=DEFAULT_TARGET_COLUMN,
     )
+
+
+def load_power_dataframe(
+    data_path: str | Path = DEFAULT_DATA_PATH,
+) -> pd.DataFrame:
+    """
+    Backward-compatible alias.
+
+    The current target is ENERGY_MWH (daily generated energy), not daily
+    mean power.
+    """
+    return load_daily_generation_dataframe(data_path)
 
 
 def validation_month_for_year(
@@ -461,7 +475,7 @@ PowerRotatingMonthValidationDataset = RotatingMonthValidationDataset
 PowerMonthlyTestDataset = MonthlyTestDataset
 
 # Compatibility aliases for the existing fine-tuning experiment imports.
-# They now operate on POWER_MW because DEFAULT_DATA_PATH is the power dataset.
+# They now operate on ENERGY_MWH because it is the default daily target.
 WindContinuousRandomTrainDataset = ContinuousRandomTrainDataset
 WindRotatingMonthValidationDataset = RotatingMonthValidationDataset
 WindMonthlyTestDataset = MonthlyTestDataset

@@ -234,9 +234,9 @@ def apply_value_bounds(
     """
     Apply physical bounds to all forecast quantiles.
 
-    For power forecasting, a lower bound of 0 MW is always meaningful. An
-    upper bound can be supplied from the preprocessing metadata, where it is
-    stored as ``effective_capacity_mw``.
+    For daily generated-energy forecasting, a lower bound of 0 MWh is
+    meaningful. The upper bound can be supplied from preprocessing metadata
+    as ``max_daily_energy_mwh``.
 
     policy:
         ``clip``  -> clip violating values to the physical bounds.
@@ -267,7 +267,7 @@ def apply_value_bounds(
 
     if policy == "error" and (lower_violation.any() or upper_violation.any()):
         raise ValueError(
-            "TimesFM quantiles violate the configured physical power bounds. "
+            "TimesFM quantiles violate the configured physical target bounds. "
             f"lower={lower}, upper={upper}, "
             f"below={int(lower_violation.sum())}, above={int(upper_violation.sum())}."
         )

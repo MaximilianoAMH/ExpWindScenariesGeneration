@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 from transformers import TimesFm2_5ModelForPrediction
 
-from wind_scenarios.data import DEFAULT_DATA_PATH, DEFAULT_TARGET_COLUMN, load_power_dataframe
+from wind_scenarios.data import DEFAULT_DATA_PATH, DEFAULT_TARGET_COLUMN, load_daily_generation_dataframe
 
 
 MODEL_ID = "google/timesfm-2.5-200m-transformers"
@@ -23,7 +23,7 @@ def main() -> None:
     ).to(device)
     model.eval()
 
-    df = load_power_dataframe(DEFAULT_DATA_PATH)
+    df = load_daily_generation_dataframe(DEFAULT_DATA_PATH)
     forecast_date = pd.Timestamp("2014-01-01")
     matches = df.index[df["DATE"] == forecast_date]
     if len(matches) != 1:
@@ -53,7 +53,7 @@ def main() -> None:
     q50 = full[:, 5]
     q90 = full[:, 9]
 
-    print("\n=== TimesFM channel diagnostic on POWER_MW ===")
+    print("\n=== TimesFM channel diagnostic on ENERGY_MWH ===")
     print("full_predictions shape:", full.shape)
     print("channel 0 mean:", float(channel_0.mean()))
     print("Q10 mean:", float(q10.mean()))

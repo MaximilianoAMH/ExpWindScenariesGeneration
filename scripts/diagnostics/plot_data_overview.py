@@ -1,4 +1,4 @@
-"""Plot the first five and last five years of the processed daily power series."""
+"""Plot the first five and last five years of daily generated energy."""
 
 from __future__ import annotations
 
@@ -8,15 +8,15 @@ from wind_scenarios.data import (
     DEFAULT_DATA_PATH,
     DEFAULT_TARGET_COLUMN,
     PROJECT_ROOT,
-    load_power_dataframe,
+    load_daily_generation_dataframe,
 )
 
 
-OUTPUT_PATH = PROJECT_ROOT / "outputs" / "diagnostics" / "power_first_last_5_years.png"
+OUTPUT_PATH = PROJECT_ROOT / "outputs" / "diagnostics" / "daily_generation_first_last_5_years.png"
 
 
 def main() -> None:
-    df = load_power_dataframe(DEFAULT_DATA_PATH).copy()
+    df = load_daily_generation_dataframe(DEFAULT_DATA_PATH).copy()
     df["YEAR"] = df["DATE"].dt.year
     df["DAY_OF_YEAR"] = df["DATE"].dt.dayofyear
 
@@ -41,7 +41,7 @@ def main() -> None:
         ax.set_xlim(1, 366)
         ax.set_ylim(y_min, y_max)
         ax.grid(True, alpha=0.3)
-        ax.set_ylabel("Daily mean power [MW]")
+        ax.set_ylabel("Daily generated energy [MWh]")
 
     month_starts = [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
     month_labels = [
@@ -54,7 +54,7 @@ def main() -> None:
     for ax in axes[-2:]:
         ax.set_xlabel("Day of year")
 
-    fig.suptitle("Daily mean power — first 5 and last 5 years", fontsize=16)
+    fig.suptitle("Daily generated energy — first 5 and last 5 years", fontsize=16)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUTPUT_PATH, dpi=200, bbox_inches="tight")
